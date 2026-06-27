@@ -1,0 +1,160 @@
+name: Build IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "FrontendX job UUID"
+        required: true
+        type: string
+      callback_url:
+        description: "FastAPI callback URL (POST result here when done)"
+        required: true
+        type: string
+      branch:
+        description: "Branch containing project.zip"
+        required: false
+        default: "main"
+        type: string
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout ipa-builder repo
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - name: Unzip project
+        run: |
+          mkdir -p project
+          unzip -q project.zip -d project
+
+      # Copy Fastlane config files into the project directory so
+      # `bundle exec fastlane` finds them when run from project/.
+      - name: Copy Fastlane files into project
+        run: |
+          cp Gemfile project/Gemfile
+          cp -r fastlane project/fastlane
+
+      # Derive bundle ID and Xcode scheme from app.json so every generated
+      # app gets its own unique identity without any manual secret management.
+      - name: Derive bundle ID and scheme from app.json
+        id: appinfo
+        run: |
+          APP_JSON="project/app.json"
+
+          RAW_NAME=$(python3 -c "
+          import json
+          data = json.load(open('$APP_JSON'))
+          name = data.get('expo', data).get('name', 'frontendxapp')
+          print(name)
+          ")
+
+          # Sanitize name for bundle ID: lowercase, alphanumeric + hyphens only
+          SAFE_NAME=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
+
+          BUNDLE_ID="com.frontendx.${SAFE_NAME}"
+
+          echo "bundle_id=$BUNDLE_ID"   >> "$GITHUB_OUTPUT"
+          echo "scheme=$RAW_NAME"       >> "$GITHUB_OUTPUT"
+          echo "safe_name=$SAFE_NAME"   >> "$GITHUB_OUTPUT"
+
+          echo "Derived bundle ID : $BUNDLE_ID"
+          echo "Derived scheme    : $RAW_NAME"
+
+      # Inject the generated bundle ID into app.json before expo prebuild
+      # so the native Xcode project is generated with the correct identifier.
+      - name: Patch app.json with derived bundle ID
+        run: |
+          python3 - <<'EOF'
+          import json
+
+          path = "project/app.json"
+          with open(path) as f:
+              data = json.load(f)
+
+          bundle_id = "${{ steps.appinfo.outputs.bundle_id }}"
+
+          root = data.get("expo", data)
+          root.setdefault("ios", {})["bundleIdentifier"] = bundle_id
+          root.setdefault("android", {}).setdefault("package", bundle_id.replace("-", "_"))
+
+          with open(path, "w") as f:
+              json.dump(data, f, indent=2)
+
+          print(f"Patched bundleIdentifier → {bundle_id}")
+          EOF
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: project/package-lock.json
+
+      - name: Install JS dependencies
+        working-directory: project
+        run: npm install
+
+      - name: Expo prebuild (generate native iOS project)
+        working-directory: project
+        run: npx expo prebuild --clean --platform ios
+
+      # expo prebuild runs pod install but can silently skip it in CI.
+      # Running it explicitly ensures the workspace is fully resolved.
+      - name: pod install
+        working-directory: project/ios
+        run: pod install --repo-update
+
+      - name: Setup Ruby + Bundler
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+          bundler-cache: true
+          working-directory: project
+
+      - name: Run Fastlane build_ipa
+        working-directory: project
+        env:
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_GIT_PAT_B64: ${{ secrets.MATCH_GIT_PAT_B64 }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          MATCH_KEYCHAIN_NAME: "fastlane_match_keychain"
+          MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          # Auto-derived per app — not stored as secrets
+          APP_BUNDLE_ID: ${{ steps.appinfo.outputs.bundle_id }}
+          XCODE_SCHEME: ${{ steps.appinfo.outputs.scheme }}
+        run: bundle exec fastlane ios build_ipa
+
+      - name: Upload IPA artifact
+        id: upload_artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-ipa-${{ inputs.job_id }}
+          path: project/build/app.ipa
+          retention-days: 7
+
+      - name: Callback — success
+        if: success()
+        run: |
+          curl -s -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -H "X-IPA-Secret: ${{ secrets.IPA_CALLBACK_SECRET }}" \
+            -d "{\"status\": \"completed\", \"artifact_url\": \"${{ steps.upload_artifact.outputs.artifact-url }}\"}"
+
+      - name: Callback — failure
+        if: failure()
+        run: |
+          curl -s -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -H "X-IPA-Secret: ${{ secrets.IPA_CALLBACK_SECRET }}" \
+            -d "{\"status\": \"failed\", \"error\": \"GitHub Actions macOS build failed — check run ${{ github.run_id }} for logs\"}"
