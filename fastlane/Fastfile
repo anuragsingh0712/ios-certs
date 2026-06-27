@@ -29,43 +29,45 @@ platform :ios do
       lock_when_sleeps: false,
     )
 
-    # readonly: false lets Match auto-register new bundle IDs and
-    # generate provisioning profiles for them in App Store Connect.
-    match(
-      type: "development",
-      readonly: false,
-      api_key: api_key,
-      git_url: ENV["MATCH_GIT_URL"],
-      git_basic_authorization: ENV["MATCH_GIT_PAT_B64"],
-      app_identifier: bundle_id,
-      team_id: ENV["APPLE_TEAM_ID"],
-      keychain_name: ENV["MATCH_KEYCHAIN_NAME"],
-      keychain_password: ENV["MATCH_KEYCHAIN_PASSWORD"],
-      force_for_new_certificates: true,
-    )
+    begin
+      # readonly: false lets Match auto-register new bundle IDs and
+      # generate provisioning profiles for them in App Store Connect.
+      match(
+        type: "development",
+        readonly: false,
+        api_key: api_key,
+        git_url: ENV["MATCH_GIT_URL"],
+        git_basic_authorization: ENV["MATCH_GIT_PAT_B64"],
+        app_identifier: bundle_id,
+        team_id: ENV["APPLE_TEAM_ID"],
+        keychain_name: ENV["MATCH_KEYCHAIN_NAME"],
+        keychain_password: ENV["MATCH_KEYCHAIN_PASSWORD"],
+        force_for_new_certificates: true,
+      )
 
-    # Resolve the .xcworkspace path — handles app names with spaces safely
-    workspace_path = Dir["ios/*.xcworkspace"].first
-    if workspace_path.nil?
-      UI.user_error!("No .xcworkspace found in ios/ — did expo prebuild succeed?")
+      # Resolve the .xcworkspace path — handles app names with spaces safely
+      workspace_path = Dir["ios/*.xcworkspace"].first
+      if workspace_path.nil?
+        UI.user_error!("No .xcworkspace found in ios/ — did expo prebuild succeed?")
+      end
+      UI.message("Using workspace: #{workspace_path}")
+
+      gym(
+        scheme: scheme,
+        workspace: workspace_path,
+        export_method: "development",
+        output_directory: "./build",
+        output_name: "app.ipa",
+        clean: true,
+        xcargs: "-allowProvisioningUpdates",
+        export_options: {
+          method: "development",
+          teamID: ENV["APPLE_TEAM_ID"],
+        },
+      )
+    ensure
+      delete_keychain(name: ENV["MATCH_KEYCHAIN_NAME"]) rescue nil
     end
-    UI.message("Using workspace: #{workspace_path}")
-
-    gym(
-      scheme: scheme,
-      workspace: workspace_path,
-      export_method: "development",
-      output_directory: "./build",
-      output_name: "app.ipa",
-      clean: true,
-      xcargs: "-allowProvisioningUpdates",
-      export_options: {
-        method: "development",
-        teamID: ENV["APPLE_TEAM_ID"],
-      },
-    )
-
-    delete_keychain(name: ENV["MATCH_KEYCHAIN_NAME"])
   end
 
   desc "One-time: generate and push certs + profiles to the certificates repo"
@@ -80,7 +82,7 @@ platform :ios do
     # Empty array + skip_provisioning_profiles = certificate only.
     # No bundle ID lookup is performed; profiles are created per-app in build_ipa.
     match(
-      type: (ENV["MATCH_TYPE"] || "adhoc").gsub("-", ""),
+      type: (ENV["MATCH_TYPE"] || "development").gsub("-", ""),
       readonly: false,
       api_key: api_key,
       git_url: ENV["MATCH_GIT_URL"],
@@ -88,6 +90,7 @@ platform :ios do
       app_identifier: [],
       team_id: ENV["APPLE_TEAM_ID"],
       skip_provisioning_profiles: true,
+      force_for_new_certificates: true,
     )
   end
 end

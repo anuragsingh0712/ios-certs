@@ -165,8 +165,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
-          cache-dependency-path: project/package-lock.json
 
       - name: Install JS dependencies
         working-directory: project
@@ -175,6 +173,22 @@ jobs:
       - name: Expo prebuild (generate native iOS project)
         working-directory: project
         run: npx expo prebuild --clean --platform ios
+
+      # Detect the actual Xcode scheme from the generated project.
+      # The scheme file name is the source of truth — safer than relying on
+      # app.json name which may be normalized differently by expo prebuild.
+      - name: Detect Xcode scheme
+        id: scheme
+        run: |
+          SCHEME_FILE=$(find project/ios -name "*.xcscheme" | head -1)
+          if [ -n "$SCHEME_FILE" ]; then
+            SCHEME=$(basename "$SCHEME_FILE" .xcscheme)
+          else
+            echo "No .xcscheme found — falling back to app.json name"
+            SCHEME="${{ steps.appinfo.outputs.scheme }}"
+          fi
+          echo "name=$SCHEME" >> "$GITHUB_OUTPUT"
+          echo "Detected scheme: $SCHEME"
 
       # expo prebuild runs pod install but can silently skip it in CI.
       # Running it explicitly ensures the workspace is fully resolved.
@@ -210,7 +224,7 @@ jobs:
           MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           # Auto-derived per app — not stored as secrets
           APP_BUNDLE_ID: ${{ steps.appinfo.outputs.bundle_id }}
-          XCODE_SCHEME: ${{ steps.appinfo.outputs.scheme }}
+          XCODE_SCHEME: ${{ steps.scheme.outputs.name }}
         run: |
           printf '%s' "$APP_STORE_CONNECT_API_KEY" > /tmp/authkey.p8
           bundle exec fastlane ios build_ipa
