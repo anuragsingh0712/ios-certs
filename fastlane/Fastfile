@@ -31,12 +31,14 @@ platform :ios do
     if existing
       UI.message("Bundle ID already registered: #{bundle_id}")
     else
+      # ASC rejects underscores/special chars in the display name — sanitize to alphanumeric + spaces
+      safe_name = scheme.gsub(/[^a-zA-Z0-9 ]/, ' ').squeeze(' ').strip
       Spaceship::ConnectAPI::BundleId.create(
         identifier: bundle_id,
-        name:       scheme,
+        name:       safe_name,
         platform:   "IOS",
       )
-      UI.success("Registered bundle ID: #{bundle_id}")
+      UI.success("Registered bundle ID: #{bundle_id} (name: #{safe_name})")
     end
 
     create_keychain(
