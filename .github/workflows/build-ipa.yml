@@ -117,6 +117,12 @@ jobs:
           bundler-cache: true
           working-directory: project
 
+      - name: Write App Store Connect API Key
+        env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        run: |
+          printf '%s' "$APP_STORE_CONNECT_API_KEY" > /tmp/authkey.p8
+
       - name: Run Fastlane build_ipa
         working-directory: project
         env:
@@ -124,7 +130,7 @@ jobs:
           MATCH_GIT_PAT_B64: ${{ secrets.MATCH_GIT_PAT_B64 }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_FILEPATH: /tmp/authkey.p8
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           MATCH_KEYCHAIN_NAME: "fastlane_match_keychain"
