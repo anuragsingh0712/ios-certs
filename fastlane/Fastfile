@@ -16,15 +16,6 @@ platform :ios do
     UI.message("Building bundle ID : #{bundle_id}")
     UI.message("Xcode scheme       : #{scheme}")
 
-    # Register the bundle ID in App Store Connect if it doesn't exist yet.
-    # produce is idempotent — safe to run even if already registered.
-    produce(
-      app_identifier: bundle_id,
-      app_name: scheme,
-      team_id: ENV["APPLE_TEAM_ID"],
-      skip_itc: true,
-    )
-
     create_keychain(
       name: ENV["MATCH_KEYCHAIN_NAME"],
       password: ENV["MATCH_KEYCHAIN_PASSWORD"],
