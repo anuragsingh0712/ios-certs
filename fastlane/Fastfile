@@ -62,7 +62,7 @@ platform :ios do
       team_id: ENV["APPLE_TEAM_ID"],
       keychain_name: ENV["MATCH_KEYCHAIN_NAME"],
       keychain_password: ENV["MATCH_KEYCHAIN_PASSWORD"],
-      skip_certificate_verification: true,
+      generate_apple_certs: false,
     )
 
     # Resolve the .xcworkspace path — handles app names with spaces safely
