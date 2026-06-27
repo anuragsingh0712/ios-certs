@@ -16,30 +16,9 @@ platform :ios do
     UI.message("Building bundle ID : #{bundle_id}")
     UI.message("Xcode scheme       : #{scheme}")
 
-    # Register the bundle ID via Spaceship (produce doesn't support API key auth
-    # in this fastlane version). Spaceship uses the token set by
-    # app_store_connect_api_key above — no username/password needed.
-    require 'spaceship'
-    token = Spaceship::ConnectAPI::Token.create(
-      key_id:    ENV["APP_STORE_CONNECT_KEY_ID"],
-      issuer_id: ENV["APP_STORE_CONNECT_ISSUER_ID"],
-      filepath:  ENV["APP_STORE_CONNECT_KEY_FILEPATH"],
-    )
-    Spaceship::ConnectAPI.token = token
-
-    existing = Spaceship::ConnectAPI::BundleId.find(bundle_id)
-    if existing
-      UI.message("Bundle ID already registered: #{bundle_id}")
-    else
-      # ASC rejects underscores/special chars in the display name — sanitize to alphanumeric + spaces
-      safe_name = scheme.gsub(/[^a-zA-Z0-9 ]/, ' ').squeeze(' ').strip
-      Spaceship::ConnectAPI::BundleId.create(
-        identifier: bundle_id,
-        name:       safe_name,
-        platform:   "IOS",
-      )
-      UI.success("Registered bundle ID: #{bundle_id} (name: #{safe_name})")
-    end
+    # Bundle ID registration is handled by the CI workflow step before
+    # Fastlane runs — no Spaceship token setup here so match's api_key auth
+    # is not overridden by a conflicting global Spaceship token.
 
     create_keychain(
       name: ENV["MATCH_KEYCHAIN_NAME"],
@@ -62,7 +41,7 @@ platform :ios do
       team_id: ENV["APPLE_TEAM_ID"],
       keychain_name: ENV["MATCH_KEYCHAIN_NAME"],
       keychain_password: ENV["MATCH_KEYCHAIN_PASSWORD"],
-      generate_apple_certs: false,
+      force_for_new_certificates: true,
     )
 
     # Resolve the .xcworkspace path — handles app names with spaces safely
