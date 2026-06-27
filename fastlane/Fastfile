@@ -73,7 +73,7 @@ platform :ios do
     )
 
     match(
-      type: ENV["MATCH_TYPE"] || "adhoc",
+      type: (ENV["MATCH_TYPE"] || "adhoc").gsub("-", ""),
       readonly: false,
       api_key: api_key,
       git_url: ENV["MATCH_GIT_URL"],
