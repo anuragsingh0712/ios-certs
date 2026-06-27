@@ -19,10 +19,18 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Checkout ipa-builder repo
+      # Always check out main so the workflow uses the latest Fastfile/Gemfile.
+      # project.zip lives on the build branch — we fetch just that file.
+      - name: Checkout ipa-builder repo (main)
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch }}
+          ref: main
+          fetch-depth: 0
+
+      - name: Extract project.zip from build branch
+        run: |
+          git fetch origin ${{ inputs.branch }}
+          git checkout origin/${{ inputs.branch }} -- project.zip
 
       - name: Unzip project
         run: |
