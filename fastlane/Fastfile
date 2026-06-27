@@ -16,15 +16,28 @@ platform :ios do
     UI.message("Building bundle ID : #{bundle_id}")
     UI.message("Xcode scheme       : #{scheme}")
 
-    # Register the bundle ID in App Store Connect (idempotent).
-    # Do NOT pass api_key: here — produce reads it from the lane context
-    # set by app_store_connect_api_key above.
-    produce(
-      app_identifier: bundle_id,
-      app_name: scheme,
-      team_id: ENV["APPLE_TEAM_ID"],
-      skip_itc: true,
+    # Register the bundle ID via Spaceship (produce doesn't support API key auth
+    # in this fastlane version). Spaceship uses the token set by
+    # app_store_connect_api_key above — no username/password needed.
+    require 'spaceship'
+    token = Spaceship::ConnectAPI::Token.create(
+      key_id:    ENV["APP_STORE_CONNECT_KEY_ID"],
+      issuer_id: ENV["APP_STORE_CONNECT_ISSUER_ID"],
+      filepath:  ENV["APP_STORE_CONNECT_KEY_FILEPATH"],
     )
+    Spaceship::ConnectAPI.token = token
+
+    existing = Spaceship::ConnectAPI::BundleId.find(bundle_id)
+    if existing
+      UI.message("Bundle ID already registered: #{bundle_id}")
+    else
+      Spaceship::ConnectAPI::BundleId.create(
+        identifier: bundle_id,
+        name:       scheme,
+        platform:   "IOS",
+      )
+      UI.success("Registered bundle ID: #{bundle_id}")
+    end
 
     create_keychain(
       name: ENV["MATCH_KEYCHAIN_NAME"],
