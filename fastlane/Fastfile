@@ -28,7 +28,7 @@ platform :ios do
     # readonly: false lets Match auto-register new bundle IDs and
     # generate provisioning profiles for them in App Store Connect.
     match(
-      type: "ad-hoc",
+      type: "adhoc",
       readonly: false,
       api_key: api_key,
       git_url: ENV["MATCH_GIT_URL"],
@@ -73,7 +73,7 @@ platform :ios do
     )
 
     match(
-      type: ENV["MATCH_TYPE"] || "ad-hoc",
+      type: ENV["MATCH_TYPE"] || "adhoc",
       readonly: false,
       api_key: api_key,
       git_url: ENV["MATCH_GIT_URL"],

@@ -6,10 +6,10 @@ on:
       match_type:
         description: "Certificate type to initialize"
         required: true
-        default: "ad-hoc"
+        default: "adhoc"
         type: choice
         options:
-          - ad-hoc
+          - adhoc
           - development
           - app-store
 
