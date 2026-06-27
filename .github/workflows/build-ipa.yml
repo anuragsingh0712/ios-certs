@@ -7,10 +7,6 @@ on:
         description: "FrontendX job UUID"
         required: true
         type: string
-      callback_url:
-        description: "FastAPI callback URL (POST result here when done)"
-        required: true
-        type: string
       branch:
         description: "Branch containing project.zip"
         required: false
@@ -155,18 +151,4 @@ jobs:
           path: project/build/app.ipa
           retention-days: 7
 
-      - name: Callback — success
-        if: success()
-        run: |
-          curl -s -X POST "${{ inputs.callback_url }}" \
-            -H "Content-Type: application/json" \
-            -H "X-IPA-Secret: ${{ secrets.IPA_CALLBACK_SECRET }}" \
-            -d "{\"status\": \"completed\", \"artifact_url\": \"${{ steps.upload_artifact.outputs.artifact-url }}\"}"
-
-      - name: Callback — failure
-        if: failure()
-        run: |
-          curl -s -X POST "${{ inputs.callback_url }}" \
-            -H "Content-Type: application/json" \
-            -H "X-IPA-Secret: ${{ secrets.IPA_CALLBACK_SECRET }}" \
-            -d "{\"status\": \"failed\", \"error\": \"GitHub Actions macOS build failed — check run ${{ github.run_id }} for logs\"}"
+      # No callback step needed — the backend polls GitHub Actions API directly.
