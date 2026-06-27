@@ -1,0 +1,41 @@
+name: Initialize Match (run once)
+
+on:
+  workflow_dispatch:
+    inputs:
+      match_type:
+        description: "Certificate type to initialize"
+        required: true
+        default: "ad-hoc"
+        type: choice
+        options:
+          - ad-hoc
+          - development
+          - app-store
+
+jobs:
+  init-match:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby + Bundler
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+          bundler-cache: true
+
+      - name: Initialize Match via Fastlane
+        env:
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_GIT_PAT_B64: ${{ secrets.MATCH_GIT_PAT_B64 }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          MATCH_TYPE: ${{ inputs.match_type }}
+        run: bundle exec fastlane ios init_match
