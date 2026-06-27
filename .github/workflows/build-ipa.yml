@@ -16,7 +16,7 @@ on:
 jobs:
   build:
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       # Always check out main so the workflow uses the latest Fastfile/Gemfile.
@@ -93,10 +93,11 @@ jobs:
           print(f"Patched bundleIdentifier → {bundle_id}")
           EOF
 
-      # Register the bundle ID in App Store Connect via REST API.
-      # produce doesn't support API key auth, so we call the ASC API
-      # directly with a short-lived JWT. 409 = already exists = fine.
-      - name: Register bundle ID in App Store Connect
+      # Register the bundle ID and create the App Store Connect app record in
+      # one step. Both are idempotent — existing resources are skipped.
+      # produce doesn't support API key auth, so we call the ASC REST API
+      # directly with a short-lived JWT.
+      - name: Register bundle ID and create App Store Connect app
         env:
           APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
@@ -112,52 +113,102 @@ jobs:
           require 'uri'
           require 'time'
 
-          key_id     = ENV['APP_STORE_CONNECT_KEY_ID']
-          issuer_id  = ENV['APP_STORE_CONNECT_ISSUER_ID']
-          bundle_id  = ENV['APP_BUNDLE_ID']
-          app_name   = ENV['XCODE_SCHEME']
+          key_id    = ENV['APP_STORE_CONNECT_KEY_ID']
+          issuer_id = ENV['APP_STORE_CONNECT_ISSUER_ID']
+          bundle_id = ENV['APP_BUNDLE_ID']
+          app_name  = ENV['XCODE_SCHEME']
 
-          # Read key content directly from env var — no temp file needed
           private_key = OpenSSL::PKey::EC.new(ENV['APP_STORE_CONNECT_API_KEY'])
 
-          header  = Base64.urlsafe_encode64({ alg: 'ES256', kid: key_id, typ: 'JWT' }.to_json).tr('=', '')
-          now     = Time.now.to_i
-          payload = Base64.urlsafe_encode64({ iss: issuer_id, iat: now, exp: now + 1200, aud: 'appstoreconnect-v1' }.to_json).tr('=', '')
+          def make_jwt(private_key, key_id, issuer_id)
+            header  = Base64.urlsafe_encode64({ alg: 'ES256', kid: key_id, typ: 'JWT' }.to_json).tr('=', '')
+            now     = Time.now.to_i
+            payload = Base64.urlsafe_encode64({ iss: issuer_id, iat: now, exp: now + 1200, aud: 'appstoreconnect-v1' }.to_json).tr('=', '')
+            signing_input = "#{header}.#{payload}"
+            der = private_key.sign(OpenSSL::Digest::SHA256.new, signing_input)
+            asn = OpenSSL::ASN1.decode(der)
+            r   = asn.value[0].value.to_s(2).rjust(32, "\x00")[-32..]
+            s   = asn.value[1].value.to_s(2).rjust(32, "\x00")[-32..]
+            "#{signing_input}.#{Base64.urlsafe_encode64(r + s).tr('=', '')}"
+          end
 
-          signing_input = "#{header}.#{payload}"
-          der = private_key.sign(OpenSSL::Digest::SHA256.new, signing_input)
-          asn = OpenSSL::ASN1.decode(der)
-          r   = asn.value[0].value.to_s(2).rjust(32, "\x00")[-32..]
-          s   = asn.value[1].value.to_s(2).rjust(32, "\x00")[-32..]
-          token = "#{signing_input}.#{Base64.urlsafe_encode64(r + s).tr('=', '')}"
-
-          uri  = URI('https://api.appstoreconnect.apple.com/v1/bundleIds')
-          http = Net::HTTP.new(uri.host, uri.port)
+          http = Net::HTTP.new('api.appstoreconnect.apple.com', 443)
           http.use_ssl = true
 
-          req = Net::HTTP::Post.new(uri.path, {
-            'Authorization' => "Bearer #{token}",
-            'Content-Type'  => 'application/json'
-          })
+          def headers(token)
+            { 'Authorization' => "Bearer #{token}", 'Content-Type' => 'application/json' }
+          end
+
+          # ── 1. Register bundle ID ──────────────────────────────────────────
+          token = make_jwt(private_key, key_id, issuer_id)
+          req = Net::HTTP::Post.new('/v1/bundleIds', headers(token))
           req.body = {
             data: {
               type: 'bundleIds',
-              attributes: {
-                identifier: bundle_id,
-                name:       app_name,
-                platform:   'IOS'
-              }
+              attributes: { identifier: bundle_id, name: app_name, platform: 'IOS' }
             }
           }.to_json
-
           resp = http.request(req)
           if resp.code == '409'
-            puts "Bundle ID #{bundle_id} already registered — continuing."
+            puts "Bundle ID #{bundle_id} already registered."
           elsif resp.code.start_with?('2')
             puts "Registered bundle ID #{bundle_id}."
           else
             puts "ERROR registering bundle ID (#{resp.code}): #{resp.body}"
             exit 1
+          end
+
+          # ── 2. Fetch the bundle ID resource ID ────────────────────────────
+          token = make_jwt(private_key, key_id, issuer_id)
+          req = Net::HTTP::Get.new("/v1/bundleIds?filter[identifier]=#{URI.encode_www_form_component(bundle_id)}", headers(token))
+          resp = http.request(req)
+          data = JSON.parse(resp.body)['data']
+          if data.nil? || data.empty?
+            puts "ERROR: could not fetch bundle ID resource after registration"
+            exit 1
+          end
+          bundle_id_resource_id = data[0]['id']
+          puts "Bundle ID resource ID: #{bundle_id_resource_id}"
+
+          # ── 3. Check if the App Store Connect app already exists ──────────
+          # filter[bundleId] takes the BundleId resource ID, not the string identifier
+          token = make_jwt(private_key, key_id, issuer_id)
+          req = Net::HTTP::Get.new("/v1/apps?filter[bundleId]=#{URI.encode_www_form_component(bundle_id_resource_id)}", headers(token))
+          resp = http.request(req)
+          apps = JSON.parse(resp.body)['data']
+          if apps && !apps.empty?
+            puts "App already exists in App Store Connect (#{apps[0]['id']}) — skipping creation."
+          else
+            # ── 4. Create the app ──────────────────────────────────────────
+            # App Store Connect name: max 30 chars, alphanumeric + spaces only.
+            safe_display_name = app_name.gsub(/[^a-zA-Z0-9 ]/, ' ').squeeze(' ').strip[0, 30]
+            # SKU must be unique per account — use bundle ID with dots→hyphens.
+            sku = bundle_id.gsub('.', '-')[0, 50]
+
+            token = make_jwt(private_key, key_id, issuer_id)
+            req = Net::HTTP::Post.new('/v1/apps', headers(token))
+            req.body = {
+              data: {
+                type: 'apps',
+                attributes: {
+                  name:          safe_display_name,
+                  primaryLocale: 'en-US',
+                  sku:           sku
+                },
+                relationships: {
+                  bundleId: { data: { type: 'bundleIds', id: bundle_id_resource_id } }
+                }
+              }
+            }.to_json
+            resp = http.request(req)
+            if resp.code.start_with?('2')
+              puts "Created App Store Connect app: #{safe_display_name} (#{bundle_id})"
+            elsif resp.code == '409'
+              puts "App already exists (race condition) — continuing."
+            else
+              puts "ERROR creating app (#{resp.code}): #{resp.body}"
+              exit 1
+            end
           end
           RUBY
 
