@@ -22,7 +22,6 @@ platform :ios do
       app_identifier: bundle_id,
       app_name: scheme,
       team_id: ENV["APPLE_TEAM_ID"],
-      api_key: api_key,
       skip_itc: true,
     )
 
