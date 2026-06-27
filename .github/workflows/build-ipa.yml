@@ -114,8 +114,14 @@ jobs:
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.2"
-          bundler-cache: true
+          bundler-cache: false
           working-directory: project
+
+      - name: Install gems
+        working-directory: project
+        run: |
+          bundle config set frozen false
+          bundle install --jobs 4 --retry 3
 
       - name: Write App Store Connect API Key
         env:
