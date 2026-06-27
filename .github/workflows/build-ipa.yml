@@ -24,13 +24,6 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
 
-      # Write the .p8 key early so every subsequent step can use it.
-      - name: Write App Store Connect API Key
-        env:
-          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
-        run: |
-          printf '%s' "$APP_STORE_CONNECT_API_KEY" > /tmp/authkey.p8
-
       - name: Unzip project
         run: |
           mkdir -p project
@@ -97,6 +90,7 @@ jobs:
       # directly with a short-lived JWT. 409 = already exists = fine.
       - name: Register bundle ID in App Store Connect
         env:
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_BUNDLE_ID: ${{ steps.appinfo.outputs.bundle_id }}
@@ -115,7 +109,8 @@ jobs:
           bundle_id  = ENV['APP_BUNDLE_ID']
           app_name   = ENV['XCODE_SCHEME']
 
-          private_key = OpenSSL::PKey::EC.new(File.read('/tmp/authkey.p8'))
+          # Read key content directly from env var — no temp file needed
+          private_key = OpenSSL::PKey::EC.new(ENV['APP_STORE_CONNECT_API_KEY'])
 
           header  = Base64.urlsafe_encode64({ alg: 'ES256', kid: key_id, typ: 'JWT' }.to_json).tr('=', '')
           now     = Time.now.to_i
@@ -199,6 +194,7 @@ jobs:
           MATCH_GIT_PAT_B64: ${{ secrets.MATCH_GIT_PAT_B64 }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
           APP_STORE_CONNECT_KEY_FILEPATH: /tmp/authkey.p8
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
@@ -207,7 +203,9 @@ jobs:
           # Auto-derived per app — not stored as secrets
           APP_BUNDLE_ID: ${{ steps.appinfo.outputs.bundle_id }}
           XCODE_SCHEME: ${{ steps.appinfo.outputs.scheme }}
-        run: bundle exec fastlane ios build_ipa
+        run: |
+          printf '%s' "$APP_STORE_CONNECT_API_KEY" > /tmp/authkey.p8
+          bundle exec fastlane ios build_ipa
 
       - name: Upload IPA artifact
         id: upload_artifact
