@@ -16,6 +16,16 @@ platform :ios do
     UI.message("Building bundle ID : #{bundle_id}")
     UI.message("Xcode scheme       : #{scheme}")
 
+    # Register the bundle ID in App Store Connect if it doesn't exist yet.
+    # produce is idempotent — safe to run even if already registered.
+    produce(
+      app_identifier: bundle_id,
+      app_name: scheme,
+      team_id: ENV["APPLE_TEAM_ID"],
+      api_key: api_key,
+      skip_itc: true,
+    )
+
     create_keychain(
       name: ENV["MATCH_KEYCHAIN_NAME"],
       password: ENV["MATCH_KEYCHAIN_PASSWORD"],
@@ -72,15 +82,15 @@ platform :ios do
       in_house: false,
     )
 
-    # Only create the signing certificate — no bundle ID needed.
-    # Provisioning profiles are created per-app in the build_ipa lane.
+    # Empty array + skip_provisioning_profiles = certificate only.
+    # No bundle ID lookup is performed; profiles are created per-app in build_ipa.
     match(
       type: (ENV["MATCH_TYPE"] || "adhoc").gsub("-", ""),
       readonly: false,
       api_key: api_key,
       git_url: ENV["MATCH_GIT_URL"],
       git_basic_authorization: ENV["MATCH_GIT_PAT_B64"],
-      app_identifier: "com.placeholder.cert",
+      app_identifier: [],
       team_id: ENV["APPLE_TEAM_ID"],
       skip_provisioning_profiles: true,
     )
