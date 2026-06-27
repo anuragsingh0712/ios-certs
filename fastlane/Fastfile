@@ -72,14 +72,17 @@ platform :ios do
       in_house: false,
     )
 
+    # Only create the signing certificate — no bundle ID needed.
+    # Provisioning profiles are created per-app in the build_ipa lane.
     match(
       type: (ENV["MATCH_TYPE"] || "adhoc").gsub("-", ""),
       readonly: false,
       api_key: api_key,
       git_url: ENV["MATCH_GIT_URL"],
       git_basic_authorization: ENV["MATCH_GIT_PAT_B64"],
-      app_identifier: "com.frontendx.initapp",
+      app_identifier: "com.placeholder.cert",
       team_id: ENV["APPLE_TEAM_ID"],
+      skip_provisioning_profiles: true,
     )
   end
 end
