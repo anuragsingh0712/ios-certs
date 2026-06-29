@@ -19,6 +19,18 @@ jobs:
     timeout-minutes: 90
 
     steps:
+      # macos-latest ships several Xcode versions including betas (e.g.
+      # 26.5), and which one is the *default* `xcode-select` target varies
+      # between runner image updates — observed flipping between runs of
+      # this same workflow. Beta toolchains' stricter explicit-module build
+      # is incompatible with current Expo/RN CocoaPods static frameworks
+      # ("module map file ... not found" during archive). Pin to the latest
+      # *stable* release so builds are reproducible.
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
       # Always check out main so the workflow uses the latest Fastfile/Gemfile.
       # project.zip lives on the build branch — we fetch just that file.
       - name: Checkout ipa-builder repo (main)
