@@ -91,11 +91,21 @@ platform :ios do
         UI.user_error!("No .xcodeproj found in ios/ — did expo prebuild succeed?\nFound: #{Dir[File.join(project_root, 'ios', '**', '*')].inspect}")
       end
 
+      # Archiving always builds the Release configuration. The Expo/RN
+      # template's project.pbxproj ships Release with a stale
+      # CODE_SIGN_IDENTITY = "iPhone Developer" baked in. CODE_SIGN_STYLE =
+      # Automatic alone doesn't clear that — Xcode still resolved a
+      # *Development* profile (which needs a registered device, hence
+      # "team has no devices") instead of a distribution one. Overriding the
+      # identity here forces automatic signing to resolve a distribution
+      # profile for the archive.
       update_code_signing_settings(
         use_automatic_signing: true,
         path: xcodeproj_path,
         team_id: ENV["APPLE_TEAM_ID"],
         bundle_identifier: bundle_id,
+        code_sign_identity: "Apple Distribution",
+        build_configurations: ["Release"],
       )
 
       auth_xcargs = "-authenticationKeyPath #{ENV['APP_STORE_CONNECT_KEY_FILEPATH']} " \
@@ -105,6 +115,7 @@ platform :ios do
       gym(
         scheme: scheme,
         workspace: workspace_path,
+        configuration: "Release",
         export_method: "app-store",
         output_directory: build_output_dir,
         output_name: "app.ipa",
