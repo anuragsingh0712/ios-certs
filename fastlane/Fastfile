@@ -36,7 +36,7 @@ platform :ios do
       safe_display_name = bundle_id.split('.').last.gsub('-', ' ').split.map(&:capitalize).join(' ')[0, 30]
       sku = bundle_id.gsub('.', '-')[0, 50]
       produce(
-        api_key:        api_key,
+        username:       ENV["APPLE_ID"],
         app_identifier: bundle_id,
         app_name:       safe_display_name,
         language:       "English",

@@ -219,6 +219,9 @@ jobs:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           MATCH_KEYCHAIN_NAME: "fastlane_match_keychain"
           MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          FASTLANE_SESSION: ${{ secrets.FASTLANE_SESSION }}
+          FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           # Auto-derived per app — not stored as secrets
           APP_BUNDLE_ID: ${{ steps.appinfo.outputs.bundle_id }}
           XCODE_SCHEME: ${{ steps.scheme.outputs.name }}
