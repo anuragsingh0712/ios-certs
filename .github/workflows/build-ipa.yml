@@ -193,6 +193,9 @@ jobs:
         working-directory: project/ios
         run: pod install --repo-update
 
+      - name: List ios directory (debug)
+        run: find project/ios -maxdepth 3 -name "*.xcworkspace" -o -name "*.xcodeproj" | head -20
+
       - name: Setup Ruby + Bundler
         uses: ruby/setup-ruby@v1
         with:

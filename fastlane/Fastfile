@@ -63,9 +63,9 @@ platform :ios do
       )
 
       # Resolve the .xcworkspace path — handles app names with spaces safely
-      workspace_path = Dir["ios/*.xcworkspace"].first
+      workspace_path = Dir["ios/**/*.xcworkspace"].reject { |p| p.include?("Pods") }.first
       if workspace_path.nil?
-        UI.user_error!("No .xcworkspace found in ios/ — did expo prebuild succeed?")
+        UI.user_error!("No .xcworkspace found in ios/ — did expo prebuild succeed?\nFound: #{Dir['ios/**/*'].inspect}")
       end
       UI.message("Using workspace: #{workspace_path}")
 
