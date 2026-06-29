@@ -60,7 +60,6 @@ platform :ios do
         team_id: ENV["APPLE_TEAM_ID"],
         keychain_name: ENV["MATCH_KEYCHAIN_NAME"],
         keychain_password: ENV["MATCH_KEYCHAIN_PASSWORD"],
-        force_for_new_certificates: true,
       )
 
       # Resolve the .xcworkspace path — handles app names with spaces safely
@@ -81,6 +80,9 @@ platform :ios do
         export_options: {
           method: "app-store",
           teamID: ENV["APPLE_TEAM_ID"],
+          provisioningProfiles: {
+            bundle_id => "match AppStore #{bundle_id}",
+          },
         },
       )
 
