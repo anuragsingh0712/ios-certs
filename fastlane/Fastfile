@@ -39,6 +39,7 @@ platform :ios do
         username:       ENV["APPLE_ID"],
         app_identifier: bundle_id,
         app_name:       safe_display_name,
+        company_name:   ENV["APPLE_COMPANY_NAME"],
         language:       "English",
         app_version:    "1.0",
         sku:            sku,

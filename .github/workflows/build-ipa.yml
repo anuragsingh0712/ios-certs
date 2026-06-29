@@ -196,7 +196,7 @@ jobs:
       - name: Setup Ruby + Bundler
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: "3.2"
+          ruby-version: "3.3"
           bundler-cache: false
           working-directory: project
 
@@ -220,6 +220,7 @@ jobs:
           MATCH_KEYCHAIN_NAME: "fastlane_match_keychain"
           MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_COMPANY_NAME: ${{ secrets.APPLE_COMPANY_NAME }}
           FASTLANE_USER: ${{ secrets.APPLE_ID }}
           FASTLANE_SESSION: ${{ secrets.FASTLANE_SESSION }}
           FASTLANE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
