@@ -13,6 +13,14 @@ on:
         default: "main"
         type: string
 
+# Serialize all builds: `match` mutates the shared certs/profiles git repo
+# (MATCH_GIT_URL), which is shared across every app this builds. Concurrent
+# runs can race on cloning/pushing that repo and corrupt it, breaking
+# signing for every subsequent build until someone manually fixes it up.
+concurrency:
+  group: ios-build-ipa-match-certs
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: macos-latest
@@ -183,6 +191,46 @@ jobs:
         working-directory: project
         run: npx expo prebuild --clean --platform ios
 
+      # Xcode 16+'s Clang explicit-module dependency scanner resolves
+      # Expo/RN static-framework modulemaps (EXConstants, ExpoModulesCore,
+      # etc.) too early during `archive`, before CocoaPods' own script
+      # phases have generated them — producing "module map file ... not
+      # found" only on archive (plain `build` is unaffected). The documented
+      # workaround is to disable explicit modules for the Pods targets via
+      # the Podfile post_install hook, which requires re-running pod install
+      # for the setting to take effect.
+      - name: Patch Podfile to disable Clang explicit modules
+        working-directory: project/ios
+        run: |
+          python3 - <<'EOF'
+          import re
+
+          path = "Podfile"
+          with open(path) as f:
+              content = f.read()
+
+          if "CLANG_ENABLE_EXPLICIT_MODULES" in content:
+              print("Podfile already patched")
+          else:
+              patch = (
+                  "    installer.pods_project.targets.each do |target|\n"
+                  "      target.build_configurations.each do |config|\n"
+                  "        config.build_settings['CLANG_ENABLE_EXPLICIT_MODULES'] = 'NO'\n"
+                  "      end\n"
+                  "    end\n"
+              )
+              new_content, count = re.subn(r"(post_install do \|installer\|\n)", r"\1" + patch, content, count=1)
+              if count == 0:
+                  raise SystemExit("No post_install hook found in Podfile to patch")
+              with open(path, "w") as f:
+                  f.write(new_content)
+              print("Patched Podfile: disabled CLANG_ENABLE_EXPLICIT_MODULES")
+          EOF
+
+      - name: pod install (apply Podfile patch)
+        working-directory: project/ios
+        run: pod install
+
       # Detect the actual Xcode scheme from the generated project.
       # The scheme file name is the source of truth — safer than relying on
       # app.json name which may be normalized differently by expo prebuild.
@@ -217,6 +265,12 @@ jobs:
 
       - name: Run Fastlane build_ipa
         working-directory: project
+        # If FASTLANE_SESSION is missing/expired/invalid, Spaceship falls
+        # back to an interactive 2FA prompt that reads from stdin — which
+        # never resolves on a non-interactive runner. Bound it here so that
+        # failure shows up as a fast, clear timeout instead of silently
+        # consuming the whole 90-minute job timeout.
+        timeout-minutes: 25
         env:
           MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
           MATCH_GIT_PAT_B64: ${{ secrets.MATCH_GIT_PAT_B64 }}
