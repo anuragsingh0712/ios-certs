@@ -36,14 +36,15 @@ platform :ios do
       safe_display_name = bundle_id.split('.').last.gsub('-', ' ').split.map(&:capitalize).join(' ')[0, 30]
       sku = bundle_id.gsub('.', '-')[0, 50]
       produce(
-        username:       ENV["APPLE_ID"],
-        app_identifier: bundle_id,
-        app_name:       safe_display_name,
-        language:       "English",
-        app_version:    "1.0",
-        sku:            sku,
-        team_id:        ENV["APPLE_TEAM_ID"],
-        itc_team_id:    ENV["APPLE_TEAM_ID"],
+        username:          ENV["APPLE_ID"],
+        app_identifier:    bundle_id,
+        app_name:          safe_display_name,
+        language:          "English",
+        app_version:       "1.0",
+        sku:               sku,
+        team_id:           ENV["APPLE_TEAM_ID"],
+        itc_team_id:       ENV["APPLE_TEAM_ID"],
+        skip_devcenter:    false,
       )
 
       # appstore type: no device registration required in the portal.
