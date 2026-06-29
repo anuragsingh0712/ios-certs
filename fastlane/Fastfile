@@ -30,6 +30,24 @@ platform :ios do
     )
 
     begin
+      # Create the App Store Connect app record if it doesn't exist yet.
+      # produce uses Apple ID + app-specific password (Spaceship web auth)
+      # because the ASC REST API forbids POST /v1/apps for standard accounts.
+      safe_display_name = bundle_id.split('.').last.gsub('-', ' ').split.map(&:capitalize).join(' ')[0, 30]
+      sku = bundle_id.gsub('.', '-')[0, 50]
+      produce(
+        username:          ENV["APPLE_ID"],
+        app_identifier:    bundle_id,
+        app_name:          safe_display_name,
+        language:          "English",
+        app_version:       "1.0",
+        sku:               sku,
+        team_id:           ENV["APPLE_TEAM_ID"],
+        skip_itc:          false,
+        skip_devcenter:    true,
+        itc_team_id:       ENV["APPLE_TEAM_ID"],
+      )
+
       # appstore type: no device registration required in the portal.
       # development type was failing with ENTITY_ERROR_RELATIONSHIP_REQUIRED
       # because Apple requires at least one registered device for dev profiles.

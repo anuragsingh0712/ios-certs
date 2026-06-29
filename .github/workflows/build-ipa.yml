@@ -93,11 +93,10 @@ jobs:
           print(f"Patched bundleIdentifier → {bundle_id}")
           EOF
 
-      # Register the bundle ID and create the App Store Connect app record in
-      # one step. Both are idempotent — existing resources are skipped.
-      # produce doesn't support API key auth, so we call the ASC REST API
-      # directly with a short-lived JWT.
-      - name: Register bundle ID and create App Store Connect app
+      # Register the bundle ID via ASC REST API (idempotent).
+      # App Store Connect app creation is handled by `produce` in the Fastlane
+      # build_ipa lane — the REST API forbids POST /v1/apps for standard accounts.
+      - name: Register bundle ID
         env:
           APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
@@ -139,7 +138,7 @@ jobs:
             { 'Authorization' => "Bearer #{token}", 'Content-Type' => 'application/json' }
           end
 
-          # ── 1. Register bundle ID ──────────────────────────────────────────
+          # Register bundle ID (idempotent — 409 means already exists)
           token = make_jwt(private_key, key_id, issuer_id)
           req = Net::HTTP::Post.new('/v1/bundleIds', headers(token))
           req.body = {
@@ -156,59 +155,6 @@ jobs:
           else
             puts "ERROR registering bundle ID (#{resp.code}): #{resp.body}"
             exit 1
-          end
-
-          # ── 2. Fetch the bundle ID resource ID ────────────────────────────
-          token = make_jwt(private_key, key_id, issuer_id)
-          req = Net::HTTP::Get.new("/v1/bundleIds?filter[identifier]=#{URI.encode_www_form_component(bundle_id)}", headers(token))
-          resp = http.request(req)
-          data = JSON.parse(resp.body)['data']
-          if data.nil? || data.empty?
-            puts "ERROR: could not fetch bundle ID resource after registration"
-            exit 1
-          end
-          bundle_id_resource_id = data[0]['id']
-          puts "Bundle ID resource ID: #{bundle_id_resource_id}"
-
-          # ── 3. Check if the App Store Connect app already exists ──────────
-          # filter[bundleId] takes the BundleId resource ID, not the string identifier
-          token = make_jwt(private_key, key_id, issuer_id)
-          req = Net::HTTP::Get.new("/v1/apps?filter[bundleId]=#{URI.encode_www_form_component(bundle_id_resource_id)}", headers(token))
-          resp = http.request(req)
-          apps = JSON.parse(resp.body)['data']
-          if apps && !apps.empty?
-            puts "App already exists in App Store Connect (#{apps[0]['id']}) — skipping creation."
-          else
-            # ── 4. Create the app ──────────────────────────────────────────
-            # App Store Connect name: max 30 chars, alphanumeric + spaces only.
-            safe_display_name = app_name.gsub(/[^a-zA-Z0-9 ]/, ' ').squeeze(' ').strip[0, 30]
-            # SKU must be unique per account — use bundle ID with dots→hyphens.
-            sku = bundle_id.gsub('.', '-')[0, 50]
-
-            token = make_jwt(private_key, key_id, issuer_id)
-            req = Net::HTTP::Post.new('/v1/apps', headers(token))
-            req.body = {
-              data: {
-                type: 'apps',
-                attributes: {
-                  name:          safe_display_name,
-                  primaryLocale: 'en-US',
-                  sku:           sku
-                },
-                relationships: {
-                  bundleId: { data: { type: 'bundleIds', id: bundle_id_resource_id } }
-                }
-              }
-            }.to_json
-            resp = http.request(req)
-            if resp.code.start_with?('2')
-              puts "Created App Store Connect app: #{safe_display_name} (#{bundle_id})"
-            elsif resp.code == '409'
-              puts "App already exists (race condition) — continuing."
-            else
-              puts "ERROR creating app (#{resp.code}): #{resp.body}"
-              exit 1
-            end
           end
           RUBY
 
@@ -273,6 +219,8 @@ jobs:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           MATCH_KEYCHAIN_NAME: "fastlane_match_keychain"
           MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           # Auto-derived per app — not stored as secrets
           APP_BUNDLE_ID: ${{ steps.appinfo.outputs.bundle_id }}
           XCODE_SCHEME: ${{ steps.scheme.outputs.name }}
