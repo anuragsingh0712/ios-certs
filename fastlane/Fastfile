@@ -92,25 +92,26 @@ platform :ios do
       end
 
       # Archiving always builds the Release configuration. The Expo/RN
-      # template's project.pbxproj ships Release with a stale
-      # CODE_SIGN_IDENTITY = "iPhone Developer" baked in. CODE_SIGN_STYLE =
-      # Automatic alone doesn't clear that — Xcode still resolved a
-      # *Development* profile (which needs a registered device, hence
-      # "team has no devices") instead of a distribution one. Overriding the
-      # identity here forces automatic signing to resolve a distribution
-      # profile for the archive.
+      # template's project.pbxproj ships Release with CODE_SIGN_STYLE =
+      # Automatic and a stale CODE_SIGN_IDENTITY = "iPhone Developer" baked
+      # in. `match` above already auto-created/downloaded the exact
+      # distribution cert + profile (no Apple Developer portal UI involved —
+      # match does this via the ASC API key), so point Release at that
+      # profile directly instead of asking Xcode to "automatically" resolve
+      # one. Automatic signing + a manually forced "Apple Distribution"
+      # identity is a contradiction Xcode refuses to build ("conflicting
+      # provisioning settings") — automatic signing can only ever resolve a
+      # Development identity for itself, never Distribution.
+      profile_name = ENV["sigh_#{bundle_id}_appstore_profile-name"]
       update_code_signing_settings(
-        use_automatic_signing: true,
+        use_automatic_signing: false,
         path: xcodeproj_path,
         team_id: ENV["APPLE_TEAM_ID"],
         bundle_identifier: bundle_id,
         code_sign_identity: "Apple Distribution",
+        profile_name: profile_name,
         build_configurations: ["Release"],
       )
-
-      auth_xcargs = "-authenticationKeyPath #{ENV['APP_STORE_CONNECT_KEY_FILEPATH']} " \
-                    "-authenticationKeyID #{ENV['APP_STORE_CONNECT_KEY_ID']} " \
-                    "-authenticationKeyIssuerID #{ENV['APP_STORE_CONNECT_ISSUER_ID']}"
 
       gym(
         scheme: scheme,
@@ -120,15 +121,13 @@ platform :ios do
         output_directory: build_output_dir,
         output_name: "app.ipa",
         clean: true,
-        xcargs: "-allowProvisioningUpdates #{auth_xcargs}",
-        # gym only appends `xcargs` to the archive command — the separate
-        # `xcodebuild -exportArchive` step needs its own auth or automatic
-        # signing/profile resolution can fail there too.
-        export_xcargs: "-allowProvisioningUpdates #{auth_xcargs}",
         export_options: {
           method: "app-store",
           teamID: ENV["APPLE_TEAM_ID"],
-          signingStyle: "automatic",
+          signingStyle: "manual",
+          provisioningProfiles: {
+            bundle_id => profile_name,
+          },
         },
       )
 
