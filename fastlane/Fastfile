@@ -81,6 +81,27 @@ platform :ios do
       build_output_dir = File.join(project_root, "build")
       ipa_path = File.join(build_output_dir, "app.ipa")
 
+      # expo prebuild generates the Xcode project with automatic signing but
+      # no team set, so gym fails with "requires a development team". Set
+      # the team explicitly; signing/profile management itself is then
+      # handled non-interactively by xcodebuild via the ASC API key below
+      # (-allowProvisioningUpdates + -authenticationKey*), not by match.
+      xcodeproj_path = Dir[File.join(project_root, "ios", "*.xcodeproj")].first
+      if xcodeproj_path.nil?
+        UI.user_error!("No .xcodeproj found in ios/ — did expo prebuild succeed?\nFound: #{Dir[File.join(project_root, 'ios', '**', '*')].inspect}")
+      end
+
+      update_code_signing_settings(
+        use_automatic_signing: true,
+        path: xcodeproj_path,
+        team_id: ENV["APPLE_TEAM_ID"],
+        bundle_identifier: bundle_id,
+      )
+
+      auth_xcargs = "-authenticationKeyPath #{ENV['APP_STORE_CONNECT_KEY_FILEPATH']} " \
+                    "-authenticationKeyID #{ENV['APP_STORE_CONNECT_KEY_ID']} " \
+                    "-authenticationKeyIssuerID #{ENV['APP_STORE_CONNECT_ISSUER_ID']}"
+
       gym(
         scheme: scheme,
         workspace: workspace_path,
@@ -88,13 +109,15 @@ platform :ios do
         output_directory: build_output_dir,
         output_name: "app.ipa",
         clean: true,
-        xcargs: "-allowProvisioningUpdates",
+        xcargs: "-allowProvisioningUpdates #{auth_xcargs}",
+        # gym only appends `xcargs` to the archive command — the separate
+        # `xcodebuild -exportArchive` step needs its own auth or automatic
+        # signing/profile resolution can fail there too.
+        export_xcargs: "-allowProvisioningUpdates #{auth_xcargs}",
         export_options: {
           method: "app-store",
           teamID: ENV["APPLE_TEAM_ID"],
-          provisioningProfiles: {
-            bundle_id => "match AppStore #{bundle_id}",
-          },
+          signingStyle: "automatic",
         },
       )
 

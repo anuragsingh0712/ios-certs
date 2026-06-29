@@ -85,7 +85,7 @@ jobs:
 
           root = data.get("expo", data)
           root.setdefault("ios", {})["bundleIdentifier"] = bundle_id
-          root.setdefault("android", {}).setdefault("package", bundle_id.replace("-", "_"))
+          root.setdefault("android", {})["package"] = bundle_id.replace("-", "_")
 
           with open(path, "w") as f:
               json.dump(data, f, indent=2)
