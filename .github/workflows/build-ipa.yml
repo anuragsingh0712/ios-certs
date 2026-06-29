@@ -199,12 +199,6 @@ jobs:
           echo "name=$SCHEME" >> "$GITHUB_OUTPUT"
           echo "Detected scheme: $SCHEME"
 
-      # expo prebuild runs pod install but can silently skip it in CI.
-      # Running it explicitly ensures the workspace is fully resolved.
-      - name: pod install
-        working-directory: project/ios
-        run: pod install --repo-update
-
       - name: List ios directory (debug)
         run: find project/ios -maxdepth 3 -name "*.xcworkspace" -o -name "*.xcodeproj" | head -20
 
