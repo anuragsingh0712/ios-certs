@@ -140,7 +140,7 @@ platform :ios do
       end
       UI.message("Priming build finished (failure here is expected) — regenerating modulemaps via pod install...")
       Dir.chdir(ios_dir) do
-        sh("pod install --no-repo-update")
+        sh("bundle exec pod install --no-repo-update 2>&1")
       end
 
       gym(
