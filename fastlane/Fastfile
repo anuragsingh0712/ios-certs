@@ -25,6 +25,11 @@ platform :ios do
     # Fastlane runs — no Spaceship token setup here so match's api_key auth
     # is not overridden by a conflicting global Spaceship token.
 
+    # The self-hosted runner's disk persists between jobs (unlike GitHub-hosted
+    # macos-latest), so a keychain from a previous/crashed run can still be on
+    # the keychain search list and collide with create_keychain below.
+    delete_keychain(name: ENV["MATCH_KEYCHAIN_NAME"]) if File.exist?(File.expand_path("~/Library/Keychains/#{ENV["MATCH_KEYCHAIN_NAME"]}-db"))
+
     create_keychain(
       name: ENV["MATCH_KEYCHAIN_NAME"],
       password: ENV["MATCH_KEYCHAIN_PASSWORD"],
