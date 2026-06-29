@@ -1,5 +1,9 @@
 name: Build IPA
 
+# Lets the backend match this run to the right job unambiguously instead of
+# guessing by timestamp — see _find_github_run_id in the backend's tasks.py.
+run-name: "ipa-build-${{ inputs.job_id }}"
+
 on:
   workflow_dispatch:
     inputs:
@@ -27,17 +31,18 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      # macos-latest ships several Xcode versions including betas (e.g.
-      # 26.5), and which one is the *default* `xcode-select` target varies
-      # between runner image updates — observed flipping between runs of
-      # this same workflow. Beta toolchains' stricter explicit-module build
-      # is incompatible with current Expo/RN CocoaPods static frameworks
-      # ("module map file ... not found" during archive). Pin to the latest
-      # *stable* release so builds are reproducible.
+      # Pin to the latest Xcode 16.x release. Xcode 26+ enables "Explicitly
+      # Built Modules" by default, which breaks Expo/RN CocoaPods static
+      # frameworks ("module map file ... not found" during archive) because
+      # clang tries to resolve pod .modulemap files before those targets are
+      # compiled. `latest-stable` now resolves to Xcode 26.x RC on macos-latest,
+      # so we pin to ~> 16.0 for reproducibility. The gym xcargs also sets
+      # ENABLE_EXPLICIT_MODULES_SUPPORT=NO as a defense-in-depth fix for
+      # whenever Xcode 26 becomes the only available stable option.
       - name: Select latest stable Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: "~> 16.0"
 
       # Always check out main so the workflow uses the latest Fastfile/Gemfile.
       # project.zip lives on the build branch — we fetch just that file.
@@ -191,46 +196,6 @@ jobs:
         working-directory: project
         run: npx expo prebuild --clean --platform ios
 
-      # Xcode 16+'s Clang explicit-module dependency scanner resolves
-      # Expo/RN static-framework modulemaps (EXConstants, ExpoModulesCore,
-      # etc.) too early during `archive`, before CocoaPods' own script
-      # phases have generated them — producing "module map file ... not
-      # found" only on archive (plain `build` is unaffected). The documented
-      # workaround is to disable explicit modules for the Pods targets via
-      # the Podfile post_install hook, which requires re-running pod install
-      # for the setting to take effect.
-      - name: Patch Podfile to disable Clang explicit modules
-        working-directory: project/ios
-        run: |
-          python3 - <<'EOF'
-          import re
-
-          path = "Podfile"
-          with open(path) as f:
-              content = f.read()
-
-          if "CLANG_ENABLE_EXPLICIT_MODULES" in content:
-              print("Podfile already patched")
-          else:
-              patch = (
-                  "    installer.pods_project.targets.each do |target|\n"
-                  "      target.build_configurations.each do |config|\n"
-                  "        config.build_settings['CLANG_ENABLE_EXPLICIT_MODULES'] = 'NO'\n"
-                  "      end\n"
-                  "    end\n"
-              )
-              new_content, count = re.subn(r"(post_install do \|installer\|\n)", r"\1" + patch, content, count=1)
-              if count == 0:
-                  raise SystemExit("No post_install hook found in Podfile to patch")
-              with open(path, "w") as f:
-                  f.write(new_content)
-              print("Patched Podfile: disabled CLANG_ENABLE_EXPLICIT_MODULES")
-          EOF
-
-      - name: pod install (apply Podfile patch)
-        working-directory: project/ios
-        run: pod install
-
       # Detect the actual Xcode scheme from the generated project.
       # The scheme file name is the source of truth — safer than relying on
       # app.json name which may be normalized differently by expo prebuild.
@@ -269,8 +234,9 @@ jobs:
         # back to an interactive 2FA prompt that reads from stdin — which
         # never resolves on a non-interactive runner. Bound it here so that
         # failure shows up as a fast, clear timeout instead of silently
-        # consuming the whole 90-minute job timeout.
-        timeout-minutes: 25
+        # consuming the whole 90-minute job timeout. Wide enough to cover
+        # the lane's priming build + re-install + real archive (see Fastfile).
+        timeout-minutes: 45
         env:
           MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
           MATCH_GIT_PAT_B64: ${{ secrets.MATCH_GIT_PAT_B64 }}

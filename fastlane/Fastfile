@@ -113,6 +113,36 @@ platform :ios do
         build_configurations: ["Release"],
       )
 
+      # Known Expo/RN bug (expo/expo#44475, #44487, #44644): the RN
+      # "replace-rncore-version.js" :before_compile script phase wipes and
+      # regenerates a shared Pods directory whenever it detects a Debug/
+      # Release "configuration switch" — and on a brand-new CI runner, the
+      # very first build is *always* such a switch (no prior cached config
+      # to compare against), destroying the static-framework modulemaps
+      # (EXConstants, ExpoModulesCore, etc.) that `pod install` just
+      # generated. That's why this only ever fails on `archive`, never on a
+      # second build with the same configuration.
+      #
+      # Work around it by priming that one-time wipe with a throwaway build
+      # (allowed to fail — the wipe script runs early, before the failure
+      # point, so it still does its job), then re-running `pod install` to
+      # regenerate the modulemaps it just destroyed. The real archive below
+      # is then a same-configuration rebuild, so the wipe script is a no-op
+      # and the freshly-regenerated modulemaps survive intact.
+      UI.message("Priming Release build once to trigger Expo/RN's one-time modulemap wipe...")
+      ios_dir = File.join(project_root, "ios")
+      Dir.chdir(ios_dir) do
+        system(
+          "xcodebuild -workspace '#{File.basename(workspace_path)}' -scheme '#{scheme}' " \
+          "-configuration Release -destination 'generic/platform=iOS' build " \
+          "> /tmp/priming_build.log 2>&1"
+        )
+      end
+      UI.message("Priming build finished (failure here is expected) — regenerating modulemaps via pod install...")
+      Dir.chdir(ios_dir) do
+        sh("pod install")
+      end
+
       gym(
         scheme: scheme,
         workspace: workspace_path,
@@ -121,6 +151,13 @@ platform :ios do
         output_directory: build_output_dir,
         output_name: "app.ipa",
         clean: true,
+        # Xcode 26+ enables "Explicitly Built Modules" by default, which causes
+        # clang to resolve CocoaPods .modulemap files (EXConstants, ExpoModulesCore,
+        # etc.) before their targets are compiled — they don't exist yet in
+        # DerivedData, producing "module map file not found" archive failures.
+        # Disabling it restores the Xcode 15/16 build order where pod targets are
+        # compiled before the app target scans their module maps.
+        xcargs: "ENABLE_EXPLICIT_MODULES_SUPPORT=NO",
         export_options: {
           method: "app-store",
           teamID: ENV["APPLE_TEAM_ID"],
