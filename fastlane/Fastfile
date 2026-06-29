@@ -3,6 +3,12 @@ default_platform(:ios)
 platform :ios do
   desc "Build and upload to TestFlight. Bundle ID and scheme are auto-derived per app."
   lane :build_ipa do
+    # Captured before create_keychain/produce/match run — those actions have
+    # been observed to leave Dir.pwd pointed somewhere other than the project
+    # root (e.g. a match git-clone temp dir), which broke the later relative
+    # "ios/**/*.xcworkspace" glob even though the workspace existed on disk.
+    project_root = Dir.pwd
+
     api_key = app_store_connect_api_key(
       key_id: ENV["APP_STORE_CONNECT_KEY_ID"],
       issuer_id: ENV["APP_STORE_CONNECT_ISSUER_ID"],
@@ -62,18 +68,25 @@ platform :ios do
         keychain_password: ENV["MATCH_KEYCHAIN_PASSWORD"],
       )
 
-      # Resolve the .xcworkspace path — handles app names with spaces safely
-      workspace_path = Dir["ios/**/*.xcworkspace"].reject { |p| p.include?("Pods") }.first
+      # Resolve the .xcworkspace path — handles app names with spaces safely.
+      # Anchored to project_root (captured before any actions ran above) since
+      # Dir.pwd is not reliable here.
+      UI.message("Resolving workspace from project_root: #{project_root} (current Dir.pwd: #{Dir.pwd})")
+      workspace_path = Dir[File.join(project_root, "ios", "**", "*.xcworkspace")]
+                          .reject { |p| p.include?("Pods") }.first
       if workspace_path.nil?
-        UI.user_error!("No .xcworkspace found in ios/ — did expo prebuild succeed?\nFound: #{Dir['ios/**/*'].inspect}")
+        UI.user_error!("No .xcworkspace found in ios/ — did expo prebuild succeed?\nFound: #{Dir[File.join(project_root, 'ios', '**', '*')].inspect}")
       end
       UI.message("Using workspace: #{workspace_path}")
+
+      build_output_dir = File.join(project_root, "build")
+      ipa_path = File.join(build_output_dir, "app.ipa")
 
       gym(
         scheme: scheme,
         workspace: workspace_path,
         export_method: "app-store",
-        output_directory: "./build",
+        output_directory: build_output_dir,
         output_name: "app.ipa",
         clean: true,
         xcargs: "-allowProvisioningUpdates",
@@ -88,7 +101,7 @@ platform :ios do
 
       upload_to_testflight(
         api_key: api_key,
-        ipa: "./build/app.ipa",
+        ipa: ipa_path,
         app_identifier: bundle_id,
         skip_waiting_for_build_processing: true,
         notify_external_testers: false,
