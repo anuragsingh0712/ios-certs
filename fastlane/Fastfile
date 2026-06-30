@@ -151,52 +151,50 @@ platform :ios do
         build_configurations: ["Release"],
       )
 
-      # Known Expo/RN bug (expo/expo#44475, #44487, #44644): the RN
-      # "replace-rncore-version.js" :before_compile script phase wipes and
-      # regenerates a shared Pods directory whenever it detects a Debug/
-      # Release "configuration switch" — and on a brand-new CI runner, the
-      # very first build is *always* such a switch (no prior cached config
-      # to compare against), destroying the static-framework modulemaps
-      # (EXConstants, ExpoModulesCore, etc.) that `pod install` just
-      # generated. That's why this only ever fails on `archive`, never on a
-      # second build with the same configuration.
+      # Known Expo/RN bug (expo/expo#44475, #44487, #44644), but NOT the
+      # one-time-wipe-on-config-switch theory this codebase used to chase
+      # (see git history) — three separate CI runs proved that wrong: a
+      # correctly-executing priming archive (real compile time, not a
+      # silently-failing no-op) still left the real `gym` archive hitting
+      # the identical "module map file ... not found" errors for the same
+      # 7 Expo modules every time. It's not a cache/wipe quirk; it's
+      # deterministic.
       #
-      # Work around it by priming that one-time wipe with a throwaway build
-      # (allowed to fail — the wipe script runs early, before the failure
-      # point, so it still does its job), then re-running `pod install` to
-      # regenerate the modulemaps it just destroyed. The real archive below
-      # is then a same-configuration rebuild, so the wipe script is a no-op
-      # and the freshly-regenerated modulemaps survive intact.
-      UI.message("Priming Release build once to trigger Expo/RN's one-time modulemap wipe...")
+      # Root cause: CocoaPods only emits a .modulemap for a pod target when
+      # DEFINES_MODULE=YES is set on it. Expo's own Podfile helper only sets
+      # that for ExpoModulesCore itself ("[Expo] Enabling modular headers
+      # for pod ExpoModulesCore" in the pod install log) — every other Expo
+      # support pod (EXConstants, ExpoAsset, ExpoFileSystem, ExpoFont,
+      # ExpoKeepAwake, ExpoLinearGradient) links as a plain static library
+      # with no modulemap at all, which is exactly the module list that
+      # fails. ExpoModulesProvider.swift (CocoaPods-generated) imports
+      # ExpoModulesCore, and Swift's module resolution chokes on the
+      # missing modulemaps for its sibling pods during archive.
+      #
+      # Fix: force DEFINES_MODULE=YES on every pod target via a Podfile
+      # post_install hook, so CocoaPods generates a modulemap for all of
+      # them regardless of Expo's own modular_headers allowlist. CocoaPods
+      # runs every registered post_install block, so appending this is safe
+      # even though expo prebuild's generated Podfile already has one.
       ios_dir = File.join(project_root, "ios")
-      Dir.chdir(ios_dir) do
-        # Same explicit-modules opt-outs as the real archive below — both the
-        # Clang/ObjC one (Xcode 16+) and the Swift one (default-on since
-        # Xcode 26). The Pods targets (EXConstants etc.) build before AppRN's
-        # own phases run — if explicit modules makes *them* fail first,
-        # AppRN's before_compile wipe script never executes, and this priming
-        # build silently fails to do its job (its output only goes to /tmp,
-        # so that failure mode is otherwise invisible). Without this,
-        # "failure here is expected" could be masking the workaround never
-        # actually firing.
-        #
-        # Must prime with `archive`, not `build`: they write to separate
-        # DerivedData trees (Build/Products vs.
-        # Build/Intermediates.noindex/ArchiveIntermediates/.../BuildProductsPath).
-        # Priming with `build` regenerates modulemaps in a tree gym's
-        # `archive` never reads, so the wipe still hits gym's archive with
-        # nothing there — same failure, just masked by "failure here is
-        # expected". Priming with `archive` against the same throwaway
-        # path warms the exact tree gym will reuse.
-        system(
-          "xcodebuild -workspace '#{workspace_path}' -scheme '#{scheme}' " \
-          "-configuration Release -destination 'generic/platform=iOS' " \
-          "-archivePath /tmp/priming.xcarchive archive " \
-          "CLANG_ENABLE_EXPLICIT_MODULES=NO SWIFT_ENABLE_EXPLICIT_MODULES=NO " \
-          "> /tmp/priming_build.log 2>&1"
-        )
+      podfile_path = File.join(ios_dir, "Podfile")
+      patch_marker = "ios-certs CI patch: force DEFINES_MODULE"
+      unless File.read(podfile_path).include?(patch_marker)
+        File.open(podfile_path, "a") do |f|
+          f.write(<<~RUBY)
+
+            # --- #{patch_marker} ---
+            post_install do |installer|
+              installer.pods_project.targets.each do |target|
+                target.build_configurations.each do |config|
+                  config.build_settings['DEFINES_MODULE'] = 'YES'
+                end
+              end
+            end
+          RUBY
+        end
+        UI.message("Patched Podfile: forcing DEFINES_MODULE=YES on all pod targets")
       end
-      UI.message("Priming build finished (failure here is expected) — regenerating modulemaps via pod install...")
       Dir.chdir(ios_dir) do
         sh("bundle exec pod install 2>&1")
       end
