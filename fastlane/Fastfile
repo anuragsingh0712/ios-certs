@@ -43,6 +43,16 @@ platform :ios do
       lock_when_sleeps: false,
     )
 
+    # macOS 15 regression: create_keychain no longer automatically adds the
+    # custom keychain to the user's keychain search list, so `security` and
+    # `codesign` can't find certs imported into it (manifest as "no local code
+    # signing identities found" even though match just installed the cert).
+    # Explicitly set the search list to: custom keychain first, then login keychain.
+    keychain_path = File.expand_path("~/Library/Keychains/#{ENV["MATCH_KEYCHAIN_NAME"]}-db")
+    login_keychain = File.expand_path("~/Library/Keychains/login.keychain-db")
+    sh("security list-keychains -d user -s '#{keychain_path}' '#{login_keychain}'")
+    sh("security unlock-keychain -p '#{ENV["MATCH_KEYCHAIN_PASSWORD"]}' '#{keychain_path}'")
+
     begin
       # Look up whether an App Store Connect app record already exists for
       # this bundle ID — e.g. a previous run got this far and created it
@@ -141,6 +151,15 @@ platform :ios do
       # widget, etc.) this would force the same bundle_id/profile onto it too,
       # and would need a per-target profile_name lookup instead.
       profile_name = ENV["sigh_#{bundle_id}_appstore_profile-name"]
+      if profile_name.nil? || profile_name.empty?
+        # Log all sigh_* env vars to help diagnose a naming-format change.
+        sigh_vars = ENV.select { |k, _| k.start_with?("sigh_") }
+        UI.user_error!(
+          "match did not set sigh_#{bundle_id}_appstore_profile-name.\n" \
+          "Available sigh_* vars: #{sigh_vars.keys.inspect}\n" \
+          "This usually means match ran but could not create/find the provisioning profile."
+        )
+      end
       update_code_signing_settings(
         use_automatic_signing: false,
         path: xcodeproj_path,
@@ -234,6 +253,36 @@ platform :ios do
         sh("bundle exec pod install 2>&1 | tee /tmp/pod_install.log")
       end
 
+      # Bake CLANG_ENABLE_EXPLICIT_MODULES=NO and SWIFT_ENABLE_EXPLICIT_MODULES=NO
+      # into both AppRN.xcodeproj and Pods.xcodeproj at every build configuration.
+      #
+      # Why xcargs alone is insufficient on Xcode 16.3:
+      # The PrecompileSwiftBridgingHeader phase reads build settings directly
+      # from the project file before xcargs are applied to that sub-step, so
+      # passing these as xcargs to gym has no effect on bridging header
+      # precompilation. Baking the setting into the project files ensures every
+      # phase (including PrecompileSwiftBridgingHeader) sees NO unconditionally.
+      require 'xcodeproj'
+      [
+        xcodeproj_path,
+        File.join(ios_dir, "Pods", "Pods.xcodeproj"),
+      ].each do |proj_path|
+        next unless File.exist?(proj_path)
+        proj = Xcodeproj::Project.open(proj_path)
+        proj.targets.each do |target|
+          target.build_configurations.each do |config|
+            config.build_settings["CLANG_ENABLE_EXPLICIT_MODULES"] = "NO"
+            config.build_settings["SWIFT_ENABLE_EXPLICIT_MODULES"] = "NO"
+          end
+        end
+        proj.build_configurations.each do |config|
+          config.build_settings["CLANG_ENABLE_EXPLICIT_MODULES"] = "NO"
+          config.build_settings["SWIFT_ENABLE_EXPLICIT_MODULES"] = "NO"
+        end
+        proj.save
+        UI.message("Baked CLANG/SWIFT_ENABLE_EXPLICIT_MODULES=NO into #{File.basename(proj_path)}")
+      end
+
       gym(
         scheme: scheme,
         workspace: workspace_path,
@@ -278,6 +327,10 @@ platform :ios do
         notify_external_testers: false,
       )
     ensure
+      # Restore the default keychain search list before deleting the custom one,
+      # otherwise macOS can be left with a broken/empty search list.
+      login_keychain = File.expand_path("~/Library/Keychains/login.keychain-db")
+      sh("security list-keychains -d user -s '#{login_keychain}'") rescue nil
       delete_keychain(name: ENV["MATCH_KEYCHAIN_NAME"]) rescue nil
     end
   end
