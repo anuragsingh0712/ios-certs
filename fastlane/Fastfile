@@ -27,9 +27,11 @@ platform :ios do
     # Fastlane runs — no Spaceship token setup here so match's api_key auth
     # is not overridden by a conflicting global Spaceship token.
 
-    # The self-hosted runner's disk persists between jobs (unlike GitHub-hosted
-    # macos-latest), so a keychain from a previous/crashed run can still be on
-    # the keychain search list and collide with create_keychain below.
+    # Normally a no-op on the GitHub-hosted macos-latest runner this currently
+    # runs on (fresh VM per job, no prior keychain). Kept as a cheap guard in
+    # case this ever moves to a self-hosted/persistent runner, where a
+    # keychain left behind by a previous/crashed run could otherwise collide
+    # with create_keychain below.
     delete_keychain(name: ENV["MATCH_KEYCHAIN_NAME"]) if File.exist?(File.expand_path("~/Library/Keychains/#{ENV["MATCH_KEYCHAIN_NAME"]}-db"))
 
     create_keychain(
@@ -133,6 +135,11 @@ platform :ios do
       # identity is a contradiction Xcode refuses to build ("conflicting
       # provisioning settings") — automatic signing can only ever resolve a
       # Development identity for itself, never Distribution.
+      # No `targets:` filter — applies to every target in the project. Fine
+      # while the Expo template only ever generates a single app target; if a
+      # generated app ever gains an extension target (notification service,
+      # widget, etc.) this would force the same bundle_id/profile onto it too,
+      # and would need a per-target profile_name lookup instead.
       profile_name = ENV["sigh_#{bundle_id}_appstore_profile-name"]
       update_code_signing_settings(
         use_automatic_signing: false,

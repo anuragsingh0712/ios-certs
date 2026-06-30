@@ -40,9 +40,11 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      # Self-hosted runners are NOT wiped between jobs (unlike GitHub-hosted
-      # macos-latest), so leftovers from a previous run (project/, build/,
-      # DerivedData, CocoaPods caches) can corrupt or stale-out this run.
+      # `runs-on: macos-latest` is a GitHub-hosted, ephemeral VM — wiped after
+      # every job — so this is normally a no-op. It's kept as a cheap guard in
+      # case this workflow is ever pointed at a self-hosted/persistent runner,
+      # where leftovers from a previous run (project/, build/, DerivedData,
+      # CocoaPods caches) could otherwise corrupt or stale-out this run.
       - name: Clean workspace from previous run
         run: |
           rm -rf project project.zip build
@@ -57,9 +59,16 @@ jobs:
           fetch-depth: 0
 
       - name: Extract project.zip from build branch
+        # inputs.branch is always backend-generated ("build/<job-uuid>"), never
+        # raw user text, but route it through env: rather than interpolating
+        # ${{ }} directly into the script — that's the standard GitHub Actions
+        # script-injection pattern, and this keeps the workflow safe even if
+        # how `branch` is constructed ever changes.
+        env:
+          BUILD_BRANCH: ${{ inputs.branch }}
         run: |
-          git fetch origin ${{ inputs.branch }}
-          git checkout origin/${{ inputs.branch }} -- project.zip
+          git fetch origin "$BUILD_BRANCH"
+          git checkout "origin/$BUILD_BRANCH" -- project.zip
 
       - name: Unzip project
         run: |
@@ -77,6 +86,8 @@ jobs:
       # app gets its own unique identity without any manual secret management.
       - name: Derive bundle ID and scheme from app.json
         id: appinfo
+        env:
+          JOB_ID: ${{ inputs.job_id }}
         run: |
           APP_JSON="project/app.json"
 
@@ -89,6 +100,13 @@ jobs:
 
           # Sanitize name for bundle ID: lowercase, alphanumeric + hyphens only
           SAFE_NAME=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
+
+          # A name made entirely of symbols/emoji sanitizes to "", which would
+          # produce an invalid bundle ID with a trailing dot (com.frontendx.).
+          # Fall back to a job-scoped name (not a fixed string) so two
+          # different empty-name apps don't collide on the same bundle ID and
+          # silently share one App Store Connect app record.
+          SAFE_NAME="${SAFE_NAME:-app-${JOB_ID:0:8}}"
 
           BUNDLE_ID="com.frontendx.${SAFE_NAME}"
 
@@ -224,11 +242,17 @@ jobs:
       - name: List ios directory (debug)
         run: find project/ios -maxdepth 3 -name "*.xcworkspace" -o -name "*.xcodeproj" | head -20
 
+      # bundler-cache: true resolves the bundle once (keyed on a hash of
+      # Gemfile + Ruby version) and reuses that exact resolution on every
+      # subsequent run — without it, "fastlane"/"cocoapods" silently float to
+      # whatever's newest on rubygems.org each run, with no checked-in
+      # Gemfile.lock to pin against. The Gemfile's version ceilings still
+      # apply when the cache is invalidated (e.g. after editing the Gemfile).
       - name: Setup Ruby + Bundler
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
-          bundler-cache: false
+          bundler-cache: true
           working-directory: project
 
       - name: Install gems
