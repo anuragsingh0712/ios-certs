@@ -1,3 +1,5 @@
+require 'digest'
+
 default_platform(:ios)
 
 platform :ios do
@@ -40,22 +42,46 @@ platform :ios do
     )
 
     begin
-      # Create the App Store Connect app record if it doesn't exist yet.
-      # produce uses Apple ID + app-specific password (Spaceship web auth)
-      # because the ASC REST API forbids POST /v1/apps for standard accounts.
-      safe_display_name = bundle_id.split('.').last.gsub('-', ' ').split.map(&:capitalize).join(' ')[0, 30]
-      sku = bundle_id.gsub('.', '-')[0, 50]
-      produce(
-        username:       ENV["APPLE_ID"],
-        app_identifier: bundle_id,
-        app_name:       safe_display_name,
-        company_name:   ENV["APPLE_COMPANY_NAME"],
-        language:       "English",
-        app_version:    "1.0",
-        sku:            sku,
-        team_id:        ENV["APPLE_TEAM_ID"],
-        itc_team_id:    ENV["APPLE_TEAM_ID"],
-      )
+      # Look up whether an App Store Connect app record already exists for
+      # this bundle ID — e.g. a previous run got this far and created it
+      # before failing later in the pipeline. This lookup works with the
+      # API key (only POST /v1/apps for *creating* an app is blocked for
+      # standard accounts, GET is not), so it never needs Apple ID web auth.
+      # Skipping produce when the app already exists also means a re-run of
+      # an already-provisioned app no longer depends on a valid Apple ID
+      # session/2FA at all.
+      existing_app = Spaceship::ConnectAPI::App.find(bundle_id)
+
+      if existing_app
+        UI.message("App Store Connect app already exists for #{bundle_id} (id: #{existing_app.id}) — skipping produce.")
+      else
+        # produce uses Apple ID + app-specific password (Spaceship web auth)
+        # because the ASC REST API forbids POST /v1/apps for standard accounts.
+        #
+        # App Store *display names* are unique across ALL Apple developer
+        # accounts worldwide (unlike bundle IDs, which are effectively
+        # namespaced here by the "com.frontendx." prefix) — generic generated
+        # names like "Todo App" or "Weather App" routinely collide with an
+        # existing app from a different account. Append a short suffix
+        # derived from the bundle ID to dodge that, deterministically (not
+        # random) so retrying produce for the same bundle ID keeps producing
+        # the same name instead of registering a new one each attempt.
+        name_suffix = Digest::SHA256.hexdigest(bundle_id)[0, 6]
+        base_name = bundle_id.split('.').last.gsub('-', ' ').split.map(&:capitalize).join(' ')[0, 22]
+        safe_display_name = "#{base_name} #{name_suffix}"[0, 30]
+        sku = bundle_id.gsub('.', '-')[0, 50]
+        produce(
+          username:       ENV["APPLE_ID"],
+          app_identifier: bundle_id,
+          app_name:       safe_display_name,
+          company_name:   ENV["APPLE_COMPANY_NAME"],
+          language:       "English",
+          app_version:    "1.0",
+          sku:            sku,
+          team_id:        ENV["APPLE_TEAM_ID"],
+          itc_team_id:    ENV["APPLE_TEAM_ID"],
+        )
+      end
 
       # appstore type: no device registration required in the portal.
       # development type was failing with ENTITY_ERROR_RELATIONSHIP_REQUIRED
