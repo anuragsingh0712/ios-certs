@@ -306,4 +306,19 @@ jobs:
           path: project/build/app.ipa
           retention-days: 7
 
+      # gym's own log (the one "see the log above" points at) only ever lived
+      # in the runner's scrollback otherwise — every prior failure required
+      # scrolling/pasting Actions UI output by hand to see the actual
+      # xcodebuild error. Upload it as a downloadable artifact instead.
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ inputs.job_id }}
+          path: |
+            /Users/runner/Library/Logs/gym/*.log
+            /tmp/priming_build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
       # No callback step needed — the backend polls GitHub Actions API directly.
