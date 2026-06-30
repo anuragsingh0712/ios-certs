@@ -242,17 +242,20 @@ jobs:
       - name: List ios directory (debug)
         run: find project/ios -maxdepth 3 -name "*.xcworkspace" -o -name "*.xcodeproj" | head -20
 
-      # bundler-cache: true resolves the bundle once (keyed on a hash of
-      # Gemfile + Ruby version) and reuses that exact resolution on every
-      # subsequent run — without it, "fastlane"/"cocoapods" silently float to
-      # whatever's newest on rubygems.org each run, with no checked-in
-      # Gemfile.lock to pin against. The Gemfile's version ceilings still
-      # apply when the cache is invalidated (e.g. after editing the Gemfile).
+      # bundler-cache: true was tried here for run-to-run reproducibility, but
+      # without a checked-in Gemfile.lock, ruby/setup-ruby's own internal
+      # `bundle install` (run as part of this step, before "Install gems"
+      # below ever sets frozen=false) can land in frozen/deployment mode
+      # against a stale cached lock and hard-fail with "Gemfile.lock freeze"
+      # / exit code 16. Reverted to false — reproducibility is handled by the
+      # Gemfile's version ceilings instead, until a real Gemfile.lock can be
+      # generated (needs a Ruby/Bundler environment to run `bundle lock` on;
+      # this repo's day-to-day editing happens from a machine without Ruby).
       - name: Setup Ruby + Bundler
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
-          bundler-cache: true
+          bundler-cache: false
           working-directory: project
 
       - name: Install gems
