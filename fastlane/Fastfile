@@ -163,9 +163,17 @@ platform :ios do
       UI.message("Priming Release build once to trigger Expo/RN's one-time modulemap wipe...")
       ios_dir = File.join(project_root, "ios")
       Dir.chdir(ios_dir) do
+        # Same CLANG_ENABLE_EXPLICIT_MODULES=NO as the real archive below. The
+        # Pods targets (EXConstants etc.) build before AppRN's own phases run —
+        # if explicit modules makes *them* fail first, AppRN's before_compile
+        # wipe script never executes, and this priming build silently fails to
+        # do its job (its output only goes to /tmp, so that failure mode is
+        # otherwise invisible). Without this, "failure here is expected" could
+        # be masking the workaround never actually firing.
         system(
           "xcodebuild -workspace '#{File.basename(workspace_path)}' -scheme '#{scheme}' " \
           "-configuration Release -destination 'generic/platform=iOS' build " \
+          "CLANG_ENABLE_EXPLICIT_MODULES=NO " \
           "> /tmp/priming_build.log 2>&1"
         )
       end
@@ -182,13 +190,17 @@ platform :ios do
         output_directory: build_output_dir,
         output_name: "app.ipa",
         clean: true,
-        # Xcode 26+ enables "Explicitly Built Modules" by default, which causes
+        # Xcode 16+ enables "Explicitly Built Modules" by default, which causes
         # clang to resolve CocoaPods .modulemap files (EXConstants, ExpoModulesCore,
         # etc.) before their targets are compiled — they don't exist yet in
         # DerivedData, producing "module map file not found" archive failures.
-        # Disabling it restores the Xcode 15/16 build order where pod targets are
-        # compiled before the app target scans their module maps.
-        xcargs: "ENABLE_EXPLICIT_MODULES_SUPPORT=NO",
+        # The real build setting is CLANG_ENABLE_EXPLICIT_MODULES (NOT
+        # "ENABLE_EXPLICIT_MODULES_SUPPORT" — that key doesn't exist in Xcode and
+        # was silently ignored, which is why archives kept failing with this
+        # exact error even with that xcarg set). Disabling it restores the
+        # pre-Xcode-16 build order where pod targets are compiled before the app
+        # target scans their module maps.
+        xcargs: "CLANG_ENABLE_EXPLICIT_MODULES=NO",
         export_options: {
           method: "app-store",
           teamID: ENV["APPLE_TEAM_ID"],
