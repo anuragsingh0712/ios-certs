@@ -245,32 +245,29 @@ jobs:
         run: |
           # Exclude ios/Pods/** — CocoaPods generates a .xcscheme per installed
           # pod alongside the app scheme; find's order is non-deterministic so
-          # head -1 without filtering can pick the wrong (pod) scheme.
-          mapfile -t SCHEME_FILES < <(find project/ios -name "*.xcscheme" -not -path "*/Pods/*")
-          COUNT=${#SCHEME_FILES[@]}
+          # filtering is required to avoid picking the wrong scheme.
+          # Note: mapfile is not used — macOS ships Bash 3.2 which lacks it.
+          SCHEME_FILE_LIST=$(find project/ios -name "*.xcscheme" -not -path "*/Pods/*" 2>/dev/null || true)
+          COUNT=$(echo "$SCHEME_FILE_LIST" | grep -c '[^[:space:]]' || true)
 
           if [ "$COUNT" -eq 0 ]; then
             echo "No .xcscheme found — falling back to app.json name"
             SCHEME="$RAW_NAME"
           elif [ "$COUNT" -eq 1 ]; then
-            SCHEME=$(basename "${SCHEME_FILES[0]}" .xcscheme)
+            SCHEME=$(basename "$SCHEME_FILE_LIST" .xcscheme)
           else
             # Multiple schemes: prefer one whose filename matches the sanitized app name
             SAFE=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g')
-            MATCH=""
-            for f in "${SCHEME_FILES[@]}"; do
+            MATCH=$(echo "$SCHEME_FILE_LIST" | while IFS= read -r f; do
+              [ -z "$f" ] && continue
               base=$(basename "$f" .xcscheme)
               base_lower=$(echo "$base" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g')
-              if [ "$base_lower" = "$SAFE" ]; then
-                MATCH="$base"
-                break
-              fi
-            done
+              if [ "$base_lower" = "$SAFE" ]; then echo "$base"; break; fi
+            done)
             if [ -n "$MATCH" ]; then
               SCHEME="$MATCH"
             else
-              # Fall back to alphabetically first non-Pods scheme and warn
-              SCHEME=$(printf '%s\n' "${SCHEME_FILES[@]}" | xargs -I{} basename {} .xcscheme | sort | head -1)
+              SCHEME=$(echo "$SCHEME_FILE_LIST" | xargs -I{} basename {} .xcscheme | sort | head -1)
               echo "::warning::Multiple schemes found — picked '$SCHEME'. Verify this is the app target."
             fi
           fi
