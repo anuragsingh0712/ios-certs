@@ -90,6 +90,9 @@ jobs:
         if: env.SKIP_BUILD != 'true'
         run: |
           cp Gemfile project/Gemfile
+          # Copy lock file so bundle install uses the exact pinned versions
+          # rather than re-resolving from the Gemfile ranges on every run.
+          [ -f Gemfile.lock ] && cp Gemfile.lock project/Gemfile.lock || true
           cp -r fastlane project/fastlane
 
       # Derive bundle ID and Xcode scheme from app.json so every generated
@@ -232,7 +235,12 @@ jobs:
       - name: Expo prebuild (generate native iOS project)
         if: env.SKIP_BUILD != 'true'
         working-directory: project
-        run: npx expo prebuild --clean --platform ios
+        # --no-install skips the pod install that expo prebuild runs internally.
+        # We patch the Podfile in the Fastlane lane first (strip legacy
+        # withExplicitModules post_install block, inject use_frameworks!) before
+        # running pod install ourselves — if prebuild runs pod install here it
+        # sees the duplicate post_install block and hard-fails before we can fix it.
+        run: npx expo prebuild --clean --platform ios --no-install
 
       # Detect the actual Xcode scheme from the generated project.
       # The scheme file name is the source of truth — safer than relying on
@@ -279,13 +287,25 @@ jobs:
         if: env.SKIP_BUILD != 'true'
         run: find project/ios -maxdepth 3 -name "*.xcworkspace" -o -name "*.xcodeproj" | head -20
 
+      # bundler-cache is off because the current Gemfile.lock was generated with
+      # an older Bundler that omitted CHECKSUMS — Bundler 4.x rejects it in
+      # frozen/deployment mode with exit 16. Re-run the generate-lockfile
+      # workflow (which now uses Bundler 4.x) to regenerate Gemfile.lock with
+      # checksums, then flip bundler-cache back to true.
       - name: Setup Ruby + Bundler
         if: env.SKIP_BUILD != 'true'
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
-          bundler-cache: true
+          bundler-cache: false
           working-directory: project
+
+      - name: Install gems
+        if: env.SKIP_BUILD != 'true'
+        working-directory: project
+        run: |
+          bundle config set frozen false
+          bundle install --jobs 4 --retry 3
 
       # Fast-fail before Fastlane if FASTLANE_SESSION is missing or expired.
       # Apple session tokens last ~30 days; when expired Spaceship falls back
@@ -293,6 +313,7 @@ jobs:
       # silently consuming the entire 45-minute Fastlane timeout.
       # Regenerate with: fastlane spaceauth -u your@apple.id
       - name: Check FASTLANE_SESSION validity
+        if: env.SKIP_BUILD != 'true'
         env:
           FASTLANE_SESSION: ${{ secrets.FASTLANE_SESSION }}
         run: |
