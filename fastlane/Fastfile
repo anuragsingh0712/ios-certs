@@ -189,7 +189,7 @@ platform :ios do
         # expected". Priming with `archive` against the same throwaway
         # path warms the exact tree gym will reuse.
         system(
-          "xcodebuild -workspace '#{File.basename(workspace_path)}' -scheme '#{scheme}' " \
+          "xcodebuild -workspace '#{workspace_path}' -scheme '#{scheme}' " \
           "-configuration Release -destination 'generic/platform=iOS' " \
           "-archivePath /tmp/priming.xcarchive archive " \
           "CLANG_ENABLE_EXPLICIT_MODULES=NO SWIFT_ENABLE_EXPLICIT_MODULES=NO " \
