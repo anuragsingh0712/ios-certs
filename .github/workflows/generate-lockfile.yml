@@ -13,13 +13,14 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 15
 
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           ref: main
           # Need write access to commit back — uses the default GITHUB_TOKEN
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PAT_TOKEN }}
 
       - name: Setup Ruby 3.3
         uses: ruby/setup-ruby@v1
