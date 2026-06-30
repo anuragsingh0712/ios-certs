@@ -206,7 +206,12 @@ jobs:
       - name: Detect Xcode scheme
         id: scheme
         run: |
-          SCHEME_FILE=$(find project/ios -name "*.xcscheme" | head -1)
+          # Exclude ios/Pods/**: CocoaPods generates one shared .xcscheme per
+          # installed pod (e.g. EXConstants-EXConstants.xcscheme) alongside the
+          # app's own scheme, and find's traversal order isn't stable across
+          # runs — without this, the wrong (pod) scheme can get picked, which
+          # then makes gym build/scan the wrong target entirely.
+          SCHEME_FILE=$(find project/ios -name "*.xcscheme" -not -path "*/Pods/*" | head -1)
           if [ -n "$SCHEME_FILE" ]; then
             SCHEME=$(basename "$SCHEME_FILE" .xcscheme)
           else
