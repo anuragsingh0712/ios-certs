@@ -1,0 +1,44 @@
+name: Generate Gemfile.lock
+
+# One-time workflow — run this once to generate and commit Gemfile.lock so
+# that build-ipa.yml can enable bundler-cache: true for faster, reproducible
+# gem installs without needing a local macOS machine.
+# After the commit lands on main, delete or disable this workflow.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  lock:
+    runs-on: macos-15
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          # Need write access to commit back — uses the default GITHUB_TOKEN
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Ruby 3.3
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: false
+
+      - name: Generate Gemfile.lock
+        run: |
+          bundle lock
+          echo "Generated Gemfile.lock:"
+          cat Gemfile.lock
+
+      - name: Commit and push Gemfile.lock
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Gemfile.lock
+          # No-op if Gemfile.lock already exists and is unchanged
+          git diff --cached --quiet && echo "Gemfile.lock unchanged — nothing to commit." && exit 0
+          git commit -m "chore: add Gemfile.lock for reproducible gem versions"
+          git push origin main

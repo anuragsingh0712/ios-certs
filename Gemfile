@@ -1,7 +1,10 @@
 source "https://rubygems.org"
 
-# Upper-bounded (not exact-pinned, no Gemfile.lock is checked in) so routine
-# patch/minor releases still flow in, but an unexpected major-version bump
-# can't silently change build behavior between runs.
-gem "fastlane", ">= 2.220", "< 3.0"
-gem "cocoapods", ">= 1.15", "< 2.0"
+# Pessimistic patch-level constraints (~> x.y allows x.y.* only).
+# This prevents a minor-version bump in fastlane or cocoapods from silently
+# changing signing, gym, or pod install behavior between CI runs.
+#
+# To upgrade: bump the minor version here, run `bundle lock` on macOS to
+# regenerate Gemfile.lock, then commit both files together.
+gem "fastlane", "~> 2.224"
+gem "cocoapods", "~> 1.16"

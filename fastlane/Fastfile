@@ -81,7 +81,7 @@ platform :ios do
           app_version:    "1.0",
           sku:            sku,
           team_id:        ENV["APPLE_TEAM_ID"],
-          itc_team_id:    ENV["APPLE_TEAM_ID"],
+          itc_team_id:    ENV["APPLE_ITC_TEAM_ID"] || ENV["APPLE_TEAM_ID"],
         )
       end
 
@@ -192,19 +192,33 @@ platform :ios do
       patch_marker = "use_frameworks! :linkage => :static"
       podfile_contents = File.read(podfile_path)
       unless podfile_contents.lines.any? { |l| l.strip.start_with?("use_frameworks!") }
+        # use_frameworks! :linkage => :static is mutually exclusive with
+        # use_modular_headers! — CocoaPods aborts if both are present in the
+        # same Podfile. use_frameworks! is a strict superset: it builds every
+        # pod as a real static framework with a proper umbrella header and
+        # .modulemap, so any pod that relied on use_modular_headers! for
+        # modular compilation gets even better support via frameworks.
+        # We strip the global use_modular_headers! line only (not per-pod
+        # :modular_headers => true settings) and inject use_frameworks! in
+        # a single atomic write so the Podfile is never left in an
+        # inconsistent state if the target-block regex fails.
+        work_contents = podfile_contents.gsub(/^[[:space:]]*use_modular_headers![[:space:]]*\n/, "")
+        had_modular_headers = work_contents != podfile_contents
+        UI.message("Removed global use_modular_headers! (incompatible with use_frameworks!)") if had_modular_headers
+
         target_re = /^(\s*)target\s+['"][^'"]+['"]\s+do\s*\n/
-        start_match = target_re.match(podfile_contents)
+        start_match = target_re.match(work_contents)
         UI.user_error!("Could not find an app `target '...' do` block in #{podfile_path} to patch") if start_match.nil?
 
         indent = start_match[1] + "  "
         injection = "#{indent}# --- ios-certs CI patch: force static frameworks for proper modulemaps ---\n#{indent}#{patch_marker}\n"
         insert_at = start_match.end(0)
-        patched_contents = podfile_contents[0...insert_at] + injection + podfile_contents[insert_at..]
-        File.write(podfile_path, patched_contents)
+        final_contents = work_contents[0...insert_at] + injection + work_contents[insert_at..]
+        File.write(podfile_path, final_contents)
         UI.message("Patched Podfile: added `#{patch_marker}` so pods build as proper modules with real modulemaps")
       end
       Dir.chdir(ios_dir) do
-        sh("bundle exec pod install 2>&1")
+        sh("bundle exec pod install 2>&1 | tee /tmp/pod_install.log")
       end
 
       gym(
