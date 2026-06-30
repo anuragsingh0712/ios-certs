@@ -175,19 +175,67 @@ platform :ios do
       # post_install hook, so CocoaPods generates a modulemap for all of
       # them regardless of Expo's own modular_headers allowlist.
       #
-      # IMPORTANT: CocoaPods does NOT support multiple `post_install` hooks
-      # in one Podfile — only the last one registered actually runs, and as
-      # of CocoaPods' newer Podfile DSL it now hard-errors with "Specifying
-      # multiple `post_install` hooks is unsupported" instead of silently
-      # ignoring the earlier one. Expo's generated Podfile already defines
-      # its own `post_install do |installer| ... end` (calling
+      # IMPORTANT #1: CocoaPods does NOT support multiple `post_install`
+      # hooks in one Podfile — only the last one registered actually runs,
+      # and current CocoaPods now hard-errors with "Specifying multiple
+      # `post_install` hooks is unsupported" instead of silently ignoring
+      # the earlier one. Expo's generated Podfile already defines its own
+      # `post_install do |installer| ... end` (calling
       # react_native_post_install), so this patch must inject its lines
       # *inside* that existing block rather than appending a second one.
+      #
+      # IMPORTANT #2: the injection must land at the END of that block
+      # (right before its closing `end`), not the start. Expo's own
+      # react_native_post_install call (already inside that block) also
+      # touches build_settings on these same pod targets; whichever code
+      # sets a given build setting *last* is what CocoaPods actually
+      # persists to the generated .xcodeproj. Injecting at the top let
+      # react_native_post_install run afterwards and silently overwrite our
+      # DEFINES_MODULE=YES, so no modulemaps were generated for
+      # EXConstants/ExpoAsset/ExpoFileSystem/ExpoFont/ExpoKeepAwake/
+      # ExpoLinearGradient/ExpoModulesCore — surfacing later as "module map
+      # file ... not found" archive failures in gym. Running last guarantees
+      # ours wins.
       ios_dir = File.join(project_root, "ios")
       podfile_path = File.join(ios_dir, "Podfile")
       patch_marker = "ios-certs CI patch: force DEFINES_MODULE"
       podfile_contents = File.read(podfile_path)
       unless podfile_contents.include?(patch_marker)
+        post_install_re = /^(\s*)post_install do \|installer\|\s*\n/
+        start_match = post_install_re.match(podfile_contents)
+        UI.user_error!("Could not find an existing `post_install do |installer|` block in #{podfile_path} to patch") if start_match.nil?
+
+        base_indent = start_match[1]
+        body_start = start_match.end(0)
+
+        # Walk the block body line by line tracking Ruby's end-terminated
+        # constructs (do-blocks, if/unless/case/begin/def/class/module/
+        # while/until/for in *statement* form) to find this post_install
+        # block's own matching closing `end` — it may itself contain nested
+        # end-terminated constructs, e.g.
+        # `installer.pods_project.targets.each do |target| ... end`.
+        # Matching only on line-leading keywords deliberately excludes
+        # Ruby's trailing modifier form (`foo if bar`), which has no `end`.
+        opener_re = /\A(do(\s*\|[^|]*\|)?\s*\z|(if|unless|case|begin|def|class|module|while|until|for)\b)/
+        closer_re = /\Aend\b/
+        depth = 1
+        scan_pos = body_start
+        end_line_start = nil
+        loop do
+          newline_idx = podfile_contents.index("\n", scan_pos)
+          UI.user_error!("Could not find the closing `end` for the post_install block in #{podfile_path}") if newline_idx.nil?
+          stripped = podfile_contents[scan_pos..newline_idx].strip
+
+          depth += 1 if opener_re.match?(stripped)
+          depth -= 1 if closer_re.match?(stripped)
+
+          if depth == 0
+            end_line_start = scan_pos
+            break
+          end
+          scan_pos = newline_idx + 1
+        end
+
         injected_lines = <<~RUBY
           # --- #{patch_marker} ---
           installer.pods_project.targets.each do |target|
@@ -196,16 +244,12 @@ platform :ios do
             end
           end
         RUBY
-
-        post_install_re = /^(\s*)post_install do \|installer\|\n/
-        match = post_install_re.match(podfile_contents)
-        UI.user_error!("Could not find an existing `post_install do |installer|` block in #{podfile_path} to patch") if match.nil?
-
-        indent = match[1] + "  "
+        indent = base_indent + "  "
         indented_injection = injected_lines.lines.map { |l| l.strip.empty? ? l : "#{indent}#{l}" }.join
-        patched_contents = podfile_contents.sub(post_install_re) { |hook_line| "#{hook_line}#{indented_injection}" }
+
+        patched_contents = podfile_contents[0...end_line_start] + indented_injection + podfile_contents[end_line_start..]
         File.write(podfile_path, patched_contents)
-        UI.message("Patched Podfile: forcing DEFINES_MODULE=YES on all pod targets (injected into existing post_install block)")
+        UI.message("Patched Podfile: forcing DEFINES_MODULE=YES on all pod targets (injected at end of existing post_install block)")
       end
       Dir.chdir(ios_dir) do
         sh("bundle exec pod install 2>&1")
