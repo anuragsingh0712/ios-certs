@@ -173,27 +173,39 @@ platform :ios do
       #
       # Fix: force DEFINES_MODULE=YES on every pod target via a Podfile
       # post_install hook, so CocoaPods generates a modulemap for all of
-      # them regardless of Expo's own modular_headers allowlist. CocoaPods
-      # runs every registered post_install block, so appending this is safe
-      # even though expo prebuild's generated Podfile already has one.
+      # them regardless of Expo's own modular_headers allowlist.
+      #
+      # IMPORTANT: CocoaPods does NOT support multiple `post_install` hooks
+      # in one Podfile — only the last one registered actually runs, and as
+      # of CocoaPods' newer Podfile DSL it now hard-errors with "Specifying
+      # multiple `post_install` hooks is unsupported" instead of silently
+      # ignoring the earlier one. Expo's generated Podfile already defines
+      # its own `post_install do |installer| ... end` (calling
+      # react_native_post_install), so this patch must inject its lines
+      # *inside* that existing block rather than appending a second one.
       ios_dir = File.join(project_root, "ios")
       podfile_path = File.join(ios_dir, "Podfile")
       patch_marker = "ios-certs CI patch: force DEFINES_MODULE"
-      unless File.read(podfile_path).include?(patch_marker)
-        File.open(podfile_path, "a") do |f|
-          f.write(<<~RUBY)
-
-            # --- #{patch_marker} ---
-            post_install do |installer|
-              installer.pods_project.targets.each do |target|
-                target.build_configurations.each do |config|
-                  config.build_settings['DEFINES_MODULE'] = 'YES'
-                end
-              end
+      podfile_contents = File.read(podfile_path)
+      unless podfile_contents.include?(patch_marker)
+        injected_lines = <<~RUBY
+          # --- #{patch_marker} ---
+          installer.pods_project.targets.each do |target|
+            target.build_configurations.each do |config|
+              config.build_settings['DEFINES_MODULE'] = 'YES'
             end
-          RUBY
-        end
-        UI.message("Patched Podfile: forcing DEFINES_MODULE=YES on all pod targets")
+          end
+        RUBY
+
+        post_install_re = /^(\s*)post_install do \|installer\|\n/
+        match = post_install_re.match(podfile_contents)
+        UI.user_error!("Could not find an existing `post_install do |installer|` block in #{podfile_path} to patch") if match.nil?
+
+        indent = match[1] + "  "
+        indented_injection = injected_lines.lines.map { |l| l.strip.empty? ? l : "#{indent}#{l}" }.join
+        patched_contents = podfile_contents.sub(post_install_re) { |hook_line| "#{hook_line}#{indented_injection}" }
+        File.write(podfile_path, patched_contents)
+        UI.message("Patched Podfile: forcing DEFINES_MODULE=YES on all pod targets (injected into existing post_install block)")
       end
       Dir.chdir(ios_dir) do
         sh("bundle exec pod install 2>&1")
