@@ -263,7 +263,13 @@ platform :ios do
       UI.user_error!("Podfile patch failed — target block regex did not match in #{podfile_path}") if injection_count == 0
 
       Dir.chdir(ios_dir) do
-        sh("bundle exec pod install 2>&1 | tee /tmp/pod_install.log")
+        # `| tee` alone masks pod install's real exit code with tee's (always
+        # 0) — a genuine pod install failure would silently fall through to
+        # "No .xcworkspace found in ios/ after pod install" below instead of
+        # surfacing here with its actual error. `set -o pipefail` makes the
+        # pipeline's exit status the *last failing* command's (pod install's),
+        # so `sh` raises immediately with the real CocoaPods error attached.
+        sh("set -o pipefail && bundle exec pod install 2>&1 | tee /tmp/pod_install.log")
         # Confirm whether pods built as frameworks (good) or static libraries (bad).
         # "Framework build type is a static framework" = use_frameworks! worked.
         # "Framework build type is static library"    = use_frameworks! NOT applied.
