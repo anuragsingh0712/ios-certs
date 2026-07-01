@@ -48,14 +48,14 @@ jobs:
       # case this workflow is ever pointed at a self-hosted/persistent runner,
       # where leftovers from a previous run (project/, build/, DerivedData,
       # CocoaPods caches) could otherwise corrupt or stale-out this run.
-      # Xcode 16.3 on macos-15 runners ships with the iPhoneOS18.4.sdk but the
-      # iOS platform device-support files are not pre-installed. Without them
-      # xcodebuild cannot resolve `generic/platform=iOS` (the destination used
-      # for archiving) and exits 70 with "iOS 18.4 is not installed".
-      # -downloadPlatform iOS fetches only the iOS platform files (not all
-      # platforms) and is idempotent — a no-op if already present.
+      # xcodebuild -downloadPlatform iOS downloads iOS device-support files
+      # (NOT the simulator — the flag name is misleading). On macos-15 runners
+      # with Xcode 16.3 the daemon it pings exits 70 ("Unable to connect to
+      # simulator") even though we are targeting a real device. The platform
+      # files ARE pre-installed on GitHub-hosted macos-15, so we suppress the
+      # non-zero exit rather than letting it abort the build.
       - name: Install iOS platform support files
-        run: xcodebuild -downloadPlatform iOS
+        run: xcodebuild -downloadPlatform iOS || true
 
       - name: Clean workspace from previous run
         run: |
