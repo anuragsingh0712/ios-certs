@@ -6,5 +6,9 @@ source "https://rubygems.org"
 #
 # To upgrade: bump the minor version here, run `bundle lock` on macOS to
 # regenerate Gemfile.lock, then commit both files together.
-gem "fastlane", "~> 2.224"
-gem "cocoapods", "~> 1.16"
+gem "fastlane",   "~> 2.224"
+gem "cocoapods",  "~> 1.16"
+# xcodeproj is a transitive dep of cocoapods but pinned explicitly here so
+# `require 'xcodeproj'` in the Fastfile is guaranteed to resolve even if a
+# future CocoaPods release drops or renames the dependency.
+gem "xcodeproj",  "~> 1.26"

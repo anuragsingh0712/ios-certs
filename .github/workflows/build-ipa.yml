@@ -347,6 +347,41 @@ jobs:
             echo "FASTLANE_SESSION valid until $EXPIRY"
           fi
 
+      # Fast-fail if the app-specific password is missing before Fastlane runs.
+      # `produce` calls Spaceship web auth with this credential; an empty value
+      # causes Spaceship to prompt for a password interactively, which never
+      # resolves on a CI runner and silently consumes the 45-minute Fastlane timeout.
+      # Generate at: appleid.apple.com → Sign-In and Security → App-Specific Passwords.
+      - name: Check APPLE_APP_SPECIFIC_PASSWORD is set
+        if: env.SKIP_BUILD != 'true'
+        env:
+          FASTLANE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          if [ -z "$FASTLANE_PASSWORD" ]; then
+            echo "::error::APPLE_APP_SPECIFIC_PASSWORD secret is empty. Generate one at appleid.apple.com → Sign-In and Security → App-Specific Passwords and store it as the APPLE_APP_SPECIFIC_PASSWORD repo secret."
+            exit 1
+          fi
+          echo "APPLE_APP_SPECIFIC_PASSWORD is set."
+
+      # Validate MATCH_GIT_PAT_B64 decodes to 'username:PAT' — a raw PAT
+      # (missing the colon-separated username prefix) produces a git 403 that
+      # looks like a network error rather than a credentials problem.
+      - name: Check MATCH_GIT_PAT_B64 format
+        if: env.SKIP_BUILD != 'true'
+        env:
+          MATCH_GIT_PAT_B64: ${{ secrets.MATCH_GIT_PAT_B64 }}
+        run: |
+          if [ -z "$MATCH_GIT_PAT_B64" ]; then
+            echo "::error::MATCH_GIT_PAT_B64 secret is empty. Set it to base64(username:PAT) for the match certificates repo."
+            exit 1
+          fi
+          DECODED=$(echo "$MATCH_GIT_PAT_B64" | base64 --decode 2>/dev/null || true)
+          if [[ "$DECODED" != *:* ]]; then
+            echo "::error::MATCH_GIT_PAT_B64 does not decode to 'username:PAT' (no colon found). Re-encode with: echo -n 'username:ghp_...' | base64"
+            exit 1
+          fi
+          echo "MATCH_GIT_PAT_B64 format looks correct."
+
       - name: Run Fastlane build_ipa
         if: env.SKIP_BUILD != 'true'
         working-directory: project
@@ -386,6 +421,10 @@ jobs:
           name: app-ipa-${{ inputs.job_id }}
           path: project/build/app.ipa
           retention-days: 7
+          # error (not warn) so the step fails when gym exits 0 but produces no
+          # IPA — prevents the backend from marking the job "completed" while
+          # there is no actual file to download.
+          if-no-files-found: error
 
       # gym's own log (the one "see the log above" points at) only ever lived
       # in the runner's scrollback otherwise — every prior failure required

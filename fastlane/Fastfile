@@ -62,7 +62,16 @@ platform :ios do
       # Skipping produce when the app already exists also means a re-run of
       # an already-provisioned app no longer depends on a valid Apple ID
       # session/2FA at all.
-      existing_app = Spaceship::ConnectAPI::App.find(bundle_id)
+      # Spaceship::ConnectAPI::App.find can raise (rate limit, invalid key,
+      # network error) instead of returning nil. Treat any exception as
+      # "app not found" and fall through to produce — if produce also fails,
+      # the real error surfaces there with a clearer message.
+      existing_app = begin
+        Spaceship::ConnectAPI::App.find(bundle_id)
+      rescue => spaceship_err
+        UI.important("ASC API lookup raised #{spaceship_err.class}: #{spaceship_err.message} — assuming app does not exist yet, falling through to produce.")
+        nil
+      end
 
       if existing_app
         UI.message("App Store Connect app already exists for #{bundle_id} (id: #{existing_app.id}) — skipping produce.")
@@ -215,40 +224,46 @@ platform :ios do
       # plugin. The use_frameworks! patch below supersedes it entirely, and leaving
       # it in causes CocoaPods to error: "Specifying multiple post_install hooks
       # is unsupported" because Expo's react_native_post_install already adds one.
-      if podfile_contents.include?("[withExplicitModules]")
+      # The old regex matched on an exact comment string ("# [withExplicitModules]
+      # already applied") which would silently fail to strip the block if that
+      # comment was ever edited, leaving a duplicate post_install block that makes
+      # CocoaPods abort with "Specifying multiple post_install hooks is unsupported".
+      # Broadened to match any post_install block that contains "withExplicitModules"
+      # anywhere inside its body (multiline, non-greedy).
+      if podfile_contents.include?("withExplicitModules")
         podfile_contents = podfile_contents.gsub(
-          /\n*^post_install do \|installer\|\n.*?# \[withExplicitModules\] already applied\n^end\n?/m,
+          /\n*^post_install do \|installer\|\n.*?withExplicitModules.*?\n^end\n?/m,
           ""
         )
         File.write(podfile_path, podfile_contents)
         UI.message("Removed legacy withExplicitModules post_install block from Podfile")
       end
-      unless podfile_contents.lines.any? { |l| l.strip.start_with?("use_frameworks!") }
-        # use_frameworks! :linkage => :static is mutually exclusive with
-        # use_modular_headers! — CocoaPods aborts if both are present in the
-        # same Podfile. use_frameworks! is a strict superset: it builds every
-        # pod as a real static framework with a proper umbrella header and
-        # .modulemap, so any pod that relied on use_modular_headers! for
-        # modular compilation gets even better support via frameworks.
-        # We strip the global use_modular_headers! line only (not per-pod
-        # :modular_headers => true settings) and inject use_frameworks! in
-        # a single atomic write so the Podfile is never left in an
-        # inconsistent state if the target-block regex fails.
-        work_contents = podfile_contents.gsub(/^[[:space:]]*use_modular_headers![[:space:]]*\n/, "")
-        had_modular_headers = work_contents != podfile_contents
-        UI.message("Removed global use_modular_headers! (incompatible with use_frameworks!)") if had_modular_headers
+      # Always strip any existing use_frameworks! / use_modular_headers! lines
+      # and re-inject unconditionally. The old `unless` guard silently skipped
+      # injection whenever the Podfile on disk already contained use_frameworks!
+      # (e.g. left by a prior run that didn't run expo prebuild --clean, or
+      # injected in the wrong scope/args by use_expo_modules!'s pre_install hook
+      # evaluated at a previous pod install). Skipping left pods building as
+      # plain static *libraries* ("Framework build type is static library"),
+      # producing no .modulemap files in BuildProductsPath — the exact "module
+      # map file not found" compile error seen for all Expo pods.
+      # use_frameworks! :linkage => :static is mutually exclusive with
+      # use_modular_headers! — strip both before injecting.
+      original_contents = podfile_contents.dup
+      work_contents = podfile_contents.gsub(/^[[:space:]]*use_frameworks!.*\n/, "")
+      work_contents = work_contents.gsub(/^[[:space:]]*use_modular_headers![[:space:]]*\n/, "")
+      UI.message("Stripped pre-existing use_frameworks!/use_modular_headers! line(s) before re-injecting") if work_contents != original_contents
 
-        target_re = /^(\s*)target\s+['"][^'"]+['"]\s+do\s*\n/
-        start_match = target_re.match(work_contents)
-        UI.user_error!("Could not find an app `target '...' do` block in #{podfile_path} to patch") if start_match.nil?
+      target_re = /^(\s*)target\s+['"][^'"]+['"]\s+do\s*\n/
+      start_match = target_re.match(work_contents)
+      UI.user_error!("Could not find an app `target '...' do` block in #{podfile_path} to patch") if start_match.nil?
 
-        indent = start_match[1] + "  "
-        injection = "#{indent}# --- ios-certs CI patch: force static frameworks for proper modulemaps ---\n#{indent}#{patch_marker}\n"
-        insert_at = start_match.end(0)
-        final_contents = work_contents[0...insert_at] + injection + work_contents[insert_at..]
-        File.write(podfile_path, final_contents)
-        UI.message("Patched Podfile: added `#{patch_marker}` so pods build as proper modules with real modulemaps")
-      end
+      indent = start_match[1] + "  "
+      injection = "#{indent}# --- ios-certs CI patch: force static frameworks for proper modulemaps ---\n#{indent}#{patch_marker}\n"
+      insert_at = start_match.end(0)
+      final_contents = work_contents[0...insert_at] + injection + work_contents[insert_at..]
+      File.write(podfile_path, final_contents)
+      UI.message("Patched Podfile: added `#{patch_marker}` so pods build as proper modules with real modulemaps")
       Dir.chdir(ios_dir) do
         sh("bundle exec pod install 2>&1 | tee /tmp/pod_install.log")
       end
