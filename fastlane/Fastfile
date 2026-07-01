@@ -262,10 +262,54 @@ platform :ios do
       injection = "#{indent}# --- ios-certs CI patch: force static frameworks for proper modulemaps ---\n#{indent}#{patch_marker}\n"
       insert_at = start_match.end(0)
       final_contents = work_contents[0...insert_at] + injection + work_contents[insert_at..]
+
+      # Inject SWIFT/CLANG_ENABLE_EXPLICIT_MODULES=NO into the existing post_install
+      # block so CocoaPods writes these settings into Pods.xcodeproj at pod-install
+      # time — the most reliable path, independent of the xcodeproj gem (which runs
+      # after pod install and can have format compatibility issues with Xcode 16
+      # project files) and xcargs (which only reach the top-level xcodebuild call,
+      # not the swift-frontend sub-processes that do actual Swift compilation).
+      # Without this, Xcode 16.3's module pre-scanner runs before ExpoModulesCore
+      # is compiled and reports "no such module 'ExpoModulesCore'" even though
+      # use_frameworks! :linkage => :static correctly builds it as a framework.
+      explicit_modules_snippet = \
+        "  # --- ios-certs CI: disable Xcode 16.3 explicit module pre-scanning ---\n" \
+        "  installer.pods_project.targets.each do |t|\n" \
+        "    t.build_configurations.each do |c|\n" \
+        "      c.build_settings['SWIFT_ENABLE_EXPLICIT_MODULES'] = 'NO'\n" \
+        "      c.build_settings['CLANG_ENABLE_EXPLICIT_MODULES'] = 'NO'\n" \
+        "    end\n" \
+        "  end\n"
+      if final_contents.match?(/^post_install do \|installer\|/m)
+        # Non-greedy .*? with /m reaches the first ^end at column 0 — always the
+        # post_install block's own closing end in the Expo SDK 51 template because
+        # react_native_post_install uses parentheses (no nested do..end inside).
+        final_contents = final_contents.sub(
+          /^(post_install do \|installer\|.*?)(^end\n?)/m,
+          "\\1#{explicit_modules_snippet}\\2"
+        )
+        UI.message("Injected SWIFT/CLANG_ENABLE_EXPLICIT_MODULES=NO into existing post_install block")
+      else
+        final_contents += "\npost_install do |installer|\n#{explicit_modules_snippet}end\n"
+        UI.message("No existing post_install block — added one with SWIFT/CLANG_ENABLE_EXPLICIT_MODULES=NO")
+      end
+
       File.write(podfile_path, final_contents)
       UI.message("Patched Podfile: added `#{patch_marker}` so pods build as proper modules with real modulemaps")
+
+      # Diagnostic: confirm use_frameworks! injection count — if 0 the target
+      # regex failed silently and pods will build as plain static libraries,
+      # causing "no such module 'ExpoModulesCore'" at archive time.
+      injection_count = final_contents.scan("use_frameworks! :linkage => :static").length
+      UI.message("use_frameworks! :linkage => :static count in Podfile: #{injection_count}")
+      UI.user_error!("Podfile patch failed — target block regex did not match in #{podfile_path}") if injection_count == 0
+
       Dir.chdir(ios_dir) do
         sh("bundle exec pod install 2>&1 | tee /tmp/pod_install.log")
+        # Confirm whether pods built as frameworks (good) or static libraries (bad).
+        # "Framework build type is a static framework" = use_frameworks! worked.
+        # "Framework build type is static library"    = use_frameworks! NOT applied.
+        sh("grep -m3 'Framework build type' /tmp/pod_install.log || echo 'Framework build type line not found in pod install log'")
       end
 
       # Bake CLANG_ENABLE_EXPLICIT_MODULES=NO and SWIFT_ENABLE_EXPLICIT_MODULES=NO

@@ -55,7 +55,17 @@ jobs:
       # files ARE pre-installed on GitHub-hosted macos-15, so we suppress the
       # non-zero exit rather than letting it abort the build.
       - name: Install iOS platform support files
-        run: xcodebuild -downloadPlatform iOS || true
+        run: |
+          # Only download if the iOS SDK is genuinely missing.
+          # On GitHub-hosted macos-15 runners iPhoneOS.platform is pre-installed,
+          # so this check always skips — preventing an 8 GB simulator download
+          # that xcodebuild -downloadPlatform triggers as a side effect.
+          if xcodebuild -showsdks 2>/dev/null | grep -q "iphoneos"; then
+            echo "iOS SDK already present — skipping platform download."
+          else
+            echo "iOS SDK not found — downloading platform support files."
+            xcodebuild -downloadPlatform iOS || true
+          fi
 
       - name: Clean workspace from previous run
         run: |
@@ -337,7 +347,7 @@ jobs:
           print(match.group(1) if match else 'unknown')
           ")
           if [ "$EXPIRY" = "unknown" ]; then
-            echo "::warning::Could not parse FASTLANE_SESSION expiry — session may be expired."
+            echo "::notice::Could not parse FASTLANE_SESSION expiry — this is normal when session cookies carry no expiry date. Session is valid if regenerated within the last 30 days."
           else
             TODAY=$(date -u +%Y-%m-%d)
             if [[ "$EXPIRY" < "$TODAY" ]]; then
@@ -439,6 +449,7 @@ jobs:
             /Users/runner/Library/Logs/gym/*.log
             /tmp/priming_build.log
             /tmp/pod_install.log
+            project/ios/Podfile
           if-no-files-found: ignore
           retention-days: 7
 
