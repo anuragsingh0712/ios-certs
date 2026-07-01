@@ -119,24 +119,6 @@ platform :ios do
         keychain_password: ENV["MATCH_KEYCHAIN_PASSWORD"],
       )
 
-      # Resolve the .xcworkspace path — handles app names with spaces safely.
-      # Anchored to project_root (captured before any actions ran above) since
-      # Dir.pwd is not reliable here.
-      UI.message("Resolving workspace from project_root: #{project_root} (current Dir.pwd: #{Dir.pwd})")
-      # Non-recursive glob (*) — only looks at ios/ top level so it finds
-      # ios/AppRN.xcworkspace (CocoaPods-generated, contains Pods) and NOT
-      # ios/AppRN.xcodeproj/project.xcworkspace (Xcode's internal self-workspace
-      # that has no Pods integration). The old ** recursive glob returned both;
-      # alphabetical sort put AppRN.xcodeproj/ before AppRN.xcworkspace/ so
-      # .first always picked the wrong one, causing "Unable to open base
-      # configuration reference file Pods-AppRN.release.xcconfig" at archive time.
-      workspace_path = Dir[File.join(project_root, "ios", "*.xcworkspace")]
-                          .reject { |p| p.include?("Pods") }.first
-      if workspace_path.nil?
-        UI.user_error!("No .xcworkspace found in ios/ — did expo prebuild succeed?\nFound: #{Dir[File.join(project_root, 'ios', '**', '*')].inspect}")
-      end
-      UI.message("Using workspace: #{workspace_path}")
-
       build_output_dir = File.join(project_root, "build")
       ipa_path = File.join(build_output_dir, "app.ipa")
 
@@ -318,6 +300,23 @@ platform :ios do
         # "Framework build type is static library"    = use_frameworks! NOT applied.
         sh("grep -m3 'Framework build type' /tmp/pod_install.log || echo 'Framework build type line not found in pod install log'")
       end
+
+      # Resolve the .xcworkspace AFTER pod install — CocoaPods creates
+      # ios/AppRN.xcworkspace at pod install time, not during expo prebuild.
+      # Non-recursive glob (*) — only looks at ios/ top level so it finds
+      # ios/AppRN.xcworkspace (CocoaPods-generated, contains Pods) and NOT
+      # ios/AppRN.xcodeproj/project.xcworkspace (Xcode's internal self-workspace
+      # that has no Pods integration). The old ** recursive glob returned both;
+      # alphabetical sort put AppRN.xcodeproj/ before AppRN.xcworkspace/ so
+      # .first always picked the wrong one, causing "Unable to open base
+      # configuration reference file Pods-AppRN.release.xcconfig" at archive time.
+      UI.message("Resolving workspace from project_root: #{project_root} (current Dir.pwd: #{Dir.pwd})")
+      workspace_path = Dir[File.join(project_root, "ios", "*.xcworkspace")]
+                          .reject { |p| p.include?("Pods") }.first
+      if workspace_path.nil?
+        UI.user_error!("No .xcworkspace found in ios/ after pod install.\nFound: #{Dir[File.join(project_root, 'ios', '**', '*')].inspect}")
+      end
+      UI.message("Using workspace: #{workspace_path}")
 
       # Bake CLANG_ENABLE_EXPLICIT_MODULES=NO and SWIFT_ENABLE_EXPLICIT_MODULES=NO
       # into both AppRN.xcodeproj and Pods.xcodeproj at every build configuration.
