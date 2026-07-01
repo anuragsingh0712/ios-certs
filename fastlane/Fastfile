@@ -123,7 +123,14 @@ platform :ios do
       # Anchored to project_root (captured before any actions ran above) since
       # Dir.pwd is not reliable here.
       UI.message("Resolving workspace from project_root: #{project_root} (current Dir.pwd: #{Dir.pwd})")
-      workspace_path = Dir[File.join(project_root, "ios", "**", "*.xcworkspace")]
+      # Non-recursive glob (*) — only looks at ios/ top level so it finds
+      # ios/AppRN.xcworkspace (CocoaPods-generated, contains Pods) and NOT
+      # ios/AppRN.xcodeproj/project.xcworkspace (Xcode's internal self-workspace
+      # that has no Pods integration). The old ** recursive glob returned both;
+      # alphabetical sort put AppRN.xcodeproj/ before AppRN.xcworkspace/ so
+      # .first always picked the wrong one, causing "Unable to open base
+      # configuration reference file Pods-AppRN.release.xcconfig" at archive time.
+      workspace_path = Dir[File.join(project_root, "ios", "*.xcworkspace")]
                           .reject { |p| p.include?("Pods") }.first
       if workspace_path.nil?
         UI.user_error!("No .xcworkspace found in ios/ — did expo prebuild succeed?\nFound: #{Dir[File.join(project_root, 'ios', '**', '*')].inspect}")
